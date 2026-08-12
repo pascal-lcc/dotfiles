@@ -1,0 +1,19 @@
+[boot]
+systemd=true
+# 自動填入你目前的 boot command
+command="{{BOOT_COMMAND}}"
+
+[network]
+generateResolvConf=false
+generateHosts=false
+hostname={{HOSTNAME}}
+
+[user]
+default={{DEFAULT_USER}}
+
+[automount]
+options = "metadata,umask=22,fmask=11"
+
+[interop]
+enabled = true
+appendWindowsPath = false

@@ -1,0 +1,42 @@
+[wsl2]
+# 建議分給 WSL 電腦總記憶體的 75%
+memory=16GB
+# 建議分給 WSL 所有的核心 (例如你的 CPU 是 16 核心就寫 16)
+processors=6
+kernel=D:\\Wsl\\kernel\\bzImage-linux-msft-wsl-6.6.114.1
+swap=0
+nestedVirtualization=true
+
+#bridged用在wifi(mac無法多個)有問題，需實體網路線
+#networkingMode=bridged
+#預設
+#networkingMode=Nat
+networkingMode=Mirrored
+#localhostForwarding=true
+
+#WSL會吃到Windows Hyper-V防火牆的規則。以系統管理員執行以下指令，開放Hyper-V防火牆，允許所有連入連線
+#Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow
+
+
+#或者，新增Hyper-V防火牆規則，只開放特定通訊埠，這邊是Apache預設的80/tcp
+#New-NetFirewallHyperVRule -Name "MyWebServer" -DisplayName "My Web Server" -Direction #Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 80.
+#
+#重啟WSL
+
+#可到hyper-V去加
+#vmSwitch=WSL (Hyper-V firewall)
+ipv6=false
+dhcp=false
+#sparseVhd=true
+#kernelCommandLine=cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1
+kernelCommandLine = elevator=none zfs.zfs_arc_max=12884901888 zfs.zfs_arc_min=2147483648 zfs.zfs_arc_meta_limit_percent=75
+
+[experimental]
+# 雖然橋接模式不一定要開，但開了對網路穩定有幫助
+dnsTunneling=false
+autoMemoryReclaim=gradual
+hostAddressLoopback=true
+#虛擬硬碟在delete後會釋放空間
+sparseVhd=true
+
+

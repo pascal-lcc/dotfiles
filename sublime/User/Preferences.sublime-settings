@@ -1,0 +1,26 @@
+{
+    // "auto_close_tags": false,
+    // "auto_complete": false,
+    // "auto_match_enabled": false,  
+    // "default_line_ending": "unix",
+
+	"theme": "auto",
+	"color_scheme": "Mariana.sublime-color-scheme",
+	"font_face": "JetBrainsMono NF Medium",
+	"font_size": 9,
+    "tab_completion": false,
+    "tab_size": 4,
+    "translate_tabs_to_spaces": true,	
+    "hardware_acceleration": "true",
+    "file_exclude_patterns":
+    [
+        "*.o", "*.so", "*.e", "*.tgz",
+    ],
+    "index_files": true,    
+    "ignored_packages":
+    [
+		"Vintage",
+    ],
+    "ui_scale": 1.1,         // 整體 UI 放大（包含側邊欄）
+    "indent_guide_options": ["draw_normal", "draw_active"], // 讓縮排對齊線更明顯
+}

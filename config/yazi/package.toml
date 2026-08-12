@@ -1,0 +1,37 @@
+[[plugin.deps]]
+use = "yazi-rs/plugins:zoom"
+rev = "25918dc"
+hash = "6ce49cf5b4c7c0d9cce8a1062ed478d3"
+
+[[plugin.deps]]
+use = "yazi-rs/plugins:full-border"
+rev = "b224ddf"
+hash = "6fa6a05a81c98dd000fbca3cca6e9682"
+
+[[plugin.deps]]
+use = "yazi-rs/plugins:duckdb"
+rev = "b224ddf"
+hash = "99aa06d3014798d86001c324468d497f"
+
+[[plugin.deps]]
+use = "yazi-rs/plugins:smart-enter"
+rev = "b224ddf"
+hash = "187cc58ba7ac3befd49c342129e6f1b6"
+
+[[plugin.deps]]
+use = "yazi-rs/plugins:jump-to-char"
+rev = "b224ddf"
+hash = "7a4b4237223aaa94e589d1c01a23542a"
+
+[[plugin.deps]]
+use = "yazi-rs/plugins:chmod"
+rev = "b224ddf"
+hash = "815dd20e682dec52bb92864037fa5f53"
+
+[[plugin.deps]]
+use = "yazi-rs/plugins:toggle-pane"
+rev = "b224ddf"
+hash = "4c0260feb50ea2437380690ffc241da7"
+
+[flavor]
+deps = []

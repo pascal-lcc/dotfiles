@@ -1,0 +1,43 @@
+scan_timeout = 50
+command_timeout = 1000
+
+format = """
+[✨](bold yellow) $directory\
+[🌙](bold purple) $git_branch\
+$git_status\
+$nodejs$rust$golang\
+\n[🚀](bold blue) """
+
+[directory]
+style = "bold blue"
+format = "[$path]($style) "
+
+truncation_length = 3  # 只顯示最後 3 層目錄
+truncate_to_repo = true # 如果在 Git 專案內，縮寫到專案根目錄就好
+
+[git_branch]
+symbol = " "
+style = "bold purple"
+format = "[$symbol$branch]($style) "
+
+[git_status]
+style = "bold pink"
+# format = "([$all_status]($style)) "
+format = '([\[$all_status$ahead_behind\]]($style) )'
+
+[character]
+success_symbol = "[❯](bold cyan)"
+error_symbol = "[❯](bold red)"
+
+# [git_status]
+# disabled = true # 這是最吃效能的兇手，關掉後速度會提升 80%
+
+# [package]
+# disabled = true # 掃描是否有 package.json/Cargo.toml，通常不需要一直看
+
+[rust]
+detect_extensions = ["rs"]
+detect_files = ["Cargo.toml"]
+detect_folders = [] # 不要在子目錄找
+# 或者直接在特定路徑停用
+disabled = false

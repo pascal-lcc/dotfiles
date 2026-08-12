@@ -1,0 +1,75 @@
+# === 作業系統特定檔案 ===
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS (如果你偶爾會用 Mac 遠端連入)
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# === 開發工具與編輯器 ===
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+# 排除 Terminus 等插件的暫存檔
+.python-version
+
+# Neovim / Vim
+*.swp
+*.swo
+.netrwhist
+undo/
+Session.vim
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+
+# === 程式語言與環境 ===
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.eslintcache
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.pytest_cache/
+
+# === 編譯輸出與壓縮檔 ===
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.7z
+*.zip
+*.gz
+*.rar
+
+# === 秘密與環境變數 (保護自己) ===
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+

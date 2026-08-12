@@ -1,0 +1,42 @@
+# 設定顯示間隔與風格
+format = """
+$username$hostname$localip$shlvl$directory$git_branch$git_commit$git_state$git_status$package$cmake$cobol$container$daml$dart$deno$dotnet$elixir$elm$erlang$golang$haskell$haxe$helm$java$julia$kotlin$lua$nim$nodejs$ocaml$perl$php$pulumi$purescript$python$raku$rlang$red$ruby$rust$scala$swift$terraform$vlang$vagrant$zig$buf$nix_shell$conda$meson$spack$memory_usage$aws$gcloud$openstack$azure$env_var$crystal$custom$sudo$cmd_duration$line_break$jobs$battery$time$status$os$container$shell$character"""
+
+[directory]
+truncation_length = 8
+truncation_symbol = "…/"
+read_only = " 󰌾"
+style = "bold italic cyan"
+
+[git_branch]
+symbol = " "
+style = "bold purple"
+
+[git_status]
+ignore_submodules = true # 減少掃描深度
+format = '([\[$all_status$ahead_behind\]]($style) )'
+style = "bold red"
+conflicted = "🏳"
+up_to_date = "󰄬"
+untracked = ""
+stashed = "󰏗"
+modified = "󰷉"
+staged = "󰐖"
+renamed = "󰑕"
+deleted = "󰗨"
+
+[character]
+success_symbol = "[󰘧](bold green)"
+error_symbol = "[󰘧](bold red)"
+
+[cmd_duration]
+min_time = 500
+format = "󱎫 [$duration]($style) "
+
+# 如果你在 WSL 中，顯示一個小圖示提醒
+[custom.wsl]
+command = "echo WSL"
+when = "test -f /proc/sys/fs/binfmt_misc/WSLInterop"
+shell = ["bash", "--noprofile", "--norc"]
+style = "bold blue"
+format = "via [󰟶 $output]($style) "

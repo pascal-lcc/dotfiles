@@ -1,0 +1,45 @@
+# config/lazygit/config.yml
+
+gui:
+  # 支援 Nerd Fonts V3 圖示 (這會讓介面變得很精緻)
+  nerdFontsVersion: "3"
+  # 介面語系 (如果你習慣看中文可以設為 zh-TW，若想看原文則維持 en)
+  language: "auto"
+  # 讓滑鼠可以點擊介面（在 WezTerm 裡很好用）
+  mouseEvents: true  
+  # 側邊欄寬度比例
+  sidePanelWidth: 0.33
+  # 顯示 Git 圖譜 (分支線)
+  showIcons: true
+  # 狀態欄的主題色 (配合你的 Neovim/WezTerm 風格)
+  theme:
+    activeBorderColor:
+      - "#80ffea" # 亮青色
+      - "bold"
+    inactiveBorderColor:
+      - "#6272a4" # 灰色
+    searchingActiveBorderColor:
+      - "#ffb86c" # 橘色
+git:
+  # 設定分頁器 (Paging)，讓 Diff 畫面更漂亮
+  # 如果你有裝 delta (推薦用 scoop install delta)，可以用 delta
+  paging:
+    colorArg: always
+    pager: delta --dark --paging=never
+  pagers:
+    - colorArg: always
+      pager: delta --dark --paging=never
+  # 送出 Commit 時的行為
+  commit:
+    signOff: false
+  # 合併衝突時的處理
+  merging:
+    manualCommit: false
+  autoFetch: true
+  useGitoxide: false
+
+# 快捷鍵自訂 (可選)
+# keybinding:
+#   universal:
+#     prevItem-alt: 'u'   # 向上捲動
+#     nextItem-alt: 'd'   # 向下捲動

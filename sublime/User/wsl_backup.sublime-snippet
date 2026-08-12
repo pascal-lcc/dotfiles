@@ -1,0 +1,12 @@
+<snippet>
+    <content><![CDATA[
+# 檢查並自動備份 WSL 設定
+if (Test-Path ${1:\$wslConfigPath}) {
+    Write-Host "發現已存在的設定，正在備份..." -ForegroundColor Yellow
+    Rename-Item -Path ${1:\$wslConfigPath} -NewName "${1:\$wslConfigPath}.bak" -Force
+}
+$0
+]]></content>
+    <tabTrigger>wslbak</tabTrigger>
+    <scope>source.powershell</scope>
+</snippet>

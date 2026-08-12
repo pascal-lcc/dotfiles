@@ -1,0 +1,17 @@
+[wsl2]
+memory={{MEM}}GB
+processors={{CPU}}
+kernel={{KERNEL_PATH}}
+swap={{SWAP_SIZE}}GB
+nestedVirtualization=true
+networkingMode=Mirrored
+ipv6=false
+dhcp=false
+# ZFS ARC 自動根據分配的記憶體調整
+kernelCommandLine = elevator=none sysctl.vm.vfs_cache_pressure=50 sysctl.vm.swappiness=10 zfs.zfs_arc_max={{ZFS_MAX}} zfs.zfs_arc_min={{ZFS_MIN}} zfs.zfs_arc_meta_limit_percent=75
+
+[experimental]
+dnsTunneling=false
+autoMemoryReclaim=gradual
+hostAddressLoopback=true
+sparseVhd=true

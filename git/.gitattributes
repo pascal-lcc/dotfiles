@@ -1,0 +1,14 @@
+# 1. 讓 Git 自動偵測並處理文字檔
+* text=auto eol=lf
+
+# 2. 強制所有 Shell 腳本 (WSL 用) 永遠使用 LF (Linux 換行)
+# 這樣在 Windows 改完，回 WSL 跑才不會噴 "\r: command not found"
+*.sh text eol=lf
+bin/* text eol=lf
+
+# 3. 強制 PowerShell 腳本在 Windows 檢出時使用 CRLF
+*.ps1 text eol=crlf
+
+# 4. 某些檔案如果不希望 Git 動它 (例如圖片或二進位檔)
+*.png binary
+*.jpg binary

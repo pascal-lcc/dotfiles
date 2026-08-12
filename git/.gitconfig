@@ -1,0 +1,37 @@
+[init]
+    defaultBranch = main
+[user]
+    name = pascalintw
+    email = pascalintw@gmail.com
+
+[core]
+    excludesfile = ~/.gitignore.global
+    attributesfile = ~/.gitattributes
+    filemode = false
+	editor = nvim
+    fscache = true
+    pager = delta
+
+[include]
+    path = ~/.gitconfig.shared
+    path = ~/.gitconfig.local
+
+[interactive]
+    # 讓互動式介面（如 git add -p）也使用 delta
+    diffFilter = delta --color-only
+
+[delta]
+    features = decorations
+    interactive = true
+    # 如果要利於複製，可以關閉 side-by-side (並排模式)
+    ; side-by-side = false 
+    # 移除導航用的邊框，讓文字靠左
+    side-by-side = true # 開啟左右對照模式 (選配，視螢幕寬度而定)
+    line-numbers = true
+    navigate = true    # 開啟 n/N 鍵在 diff 間跳轉
+    light = false      # 如果你的終端機是深色背景，設為 false
+    syntax-theme = Monokai Extended
+
+[merge]
+    # 讓合併衝突也變漂亮
+    conflictstyle = zdiff3

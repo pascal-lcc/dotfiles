@@ -1,0 +1,26 @@
+format = """
+[](#7aa2f7)\
+[󱓟 ](bg:#7aa2f7 fg:#1f2335)\
+[](fg:#7aa2f7 bg:#3b4261)\
+$directory\
+[](fg:#3b4261 bg:#7dcfff)\
+$git_branch\
+$git_status\
+[](fg:#7dcfff bg:#1f2335)\
+\n$character"""
+
+# 註解掉 memory，因為 Tmux 或 Top 來看更適合
+[memory_usage]
+disabled = true
+
+[directory]
+style = "bg:#3b4261 fg:#c0caf5" # 使用深藍色背景，降低侵略感
+format = "[ $path ]($style)"
+
+[git_branch]
+style = "bg:#7dcfff fg:#1f2335"
+format = "[ $symbol $branch ]($style)"
+
+[character]
+success_symbol = "[╰─❯](bold #73daca)"
+error_symbol = "[╰─✘](bold #f7768e)"
