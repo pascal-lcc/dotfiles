@@ -1,0 +1,34 @@
+[alias]
+    ; --- 基礎縮寫 ---
+    st = status
+    cm = commit
+    co = checkout
+    br = branch
+    cp = cherry-pick
+    ls = log --oneline --graph --decorate
+    
+    ; --- 查詢 Commit 內容 ---
+    
+    ; 1. 查某個 commit 修改了哪些檔案名稱 (只看清單)
+    ; 用法: git df-names <commit_id>
+    df-names = diff-tree --no-commit-id --name-only -r
+    
+    ; 2. 查某個 commit 修改的詳細內容 (排除統計，直接看 code)
+    ; 用法: git show-code <commit_id>
+    show-code = show --format=''
+    
+    ; 3. 列出某個 commit 當時「整個專案」的所有檔案清單
+    ; 用法: git snapshot <commit_id>
+    snapshot = ls-tree --full-tree -r --name-only
+    
+    ; 4. 像 cat 一樣讀取某個 commit 裡的特定檔案內容
+    ; 用法: git cat <commit_id> <path/to/file>
+    cat = show
+    
+    ; --- 進階日誌 (包含修改檔案統計) ---
+    ; 用法: git lg (查看精美日誌並知道誰改了哪些檔)
+    lg = log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit --stat
+
+[core]
+    safecrlf = false
+    autocrlf = input

@@ -1,0 +1,62 @@
+# 這裡也移除了最外層不必要的括號
+format = """
+[░▒▓](#9A348E)\
+[ 🚀 ](bg:#9A348E fg:#ffffff)\
+[](fg:#9A348E bg:#DA627D)\
+$directory\
+[](fg:#DA627D bg:#FCA17D)\
+$git_branch\
+$git_status\
+[](fg:#FCA17D bg:#86BBD8)\
+$c$elixir$elm$golang$haskell$java$julia$nodejs$nim$rust\
+[](fg:#86BBD8 bg:#06969A)\
+$docker_context\
+[](fg:#06969A bg:#33658A)\
+$time\
+[ ](fg:#33658A)\
+\n$character"""
+
+[directory]
+style = "bg:#DA627D fg:#ffffff"
+format = "[ $path ]($style)"
+
+[git_branch]
+symbol = ""
+style = "bg:#FCA17D fg:#313244"
+format = "[ $symbol $branch ]($style)"
+
+
+[git_metrics]
+disabled = false # 預設是關閉的，保持關閉即可
+
+[git_status]
+# 關閉這些需要深層掃描的功能
+# disabled = true
+ignore_submodules = true # 減少掃描深度
+staged = ""
+modified = ""
+untracked = ""
+renamed = ""
+deleted = ""
+style = "bg:#FCA17D fg:#313244"
+format = "[($all_status$ahead_behind )]($style)"
+
+[nodejs]
+symbol = ""
+style = "bg:#86BBD8 fg:#313244"
+format = "[ $symbol ($version) ]($style)"
+
+[rust]
+symbol = ""
+style = "bg:#86BBD8 fg:#313244"
+format = "[ $symbol ($version) ]($style)"
+
+[time]
+disabled = false
+time_format = "%R"
+style = "bg:#33658A fg:#ffffff"
+format = "[ 󱑒 $time ]($style)"
+
+[character]
+success_symbol = "[╰─λ](bold green)"
+error_symbol = "[╰─×](bold red)"

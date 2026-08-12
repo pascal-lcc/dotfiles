@@ -1,0 +1,51 @@
+format = """
+[](#7aa2f7)\
+[󱓟 ](bg:#7aa2f7 fg:#1f2335)\
+[](fg:#7aa2f7 bg:#bb9af7)\
+$directory\
+[](fg:#bb9af7 bg:#7dcfff)\
+$git_branch\
+$git_status\
+[](fg:#7dcfff bg:#e0af68)\
+$c$golang$nodejs$rust\
+[](fg:#e0af68 bg:#414868)\
+$time\
+[ ](fg:#414868)\
+\n$character"""
+
+#$memory_usage\
+#[](fg:#9ece6a bg:#414868)\
+
+[directory]
+style = "bg:#bb9af7 fg:#1f2335"
+format = "[ $path ]($style)"
+truncation_length = 4
+truncation_symbol = "󱞇 /" # 用 JetBrains Mono 看起來很棒的截斷符號
+
+[git_branch]
+symbol = "󰊢"
+style = "bg:#7dcfff fg:#1f2335"
+format = "[ $symbol $branch ]($style)"
+
+[git_status]
+style = "bg:#7dcfff fg:#1f2335"
+format = "([$all_status]($style))"
+
+[time]
+disabled = false
+time_format = "%R"
+style = "bg:#414868 fg:#c0caf5"
+format = "[ 󱑒 $time ]($style)"
+
+[character]
+# 這裡使用 JetBrains Mono 渲染起來最漂亮的實心箭頭
+success_symbol = "[󱞩](bold #73daca)" 
+error_symbol = "[󱞩](bold #f7768e)"
+
+[memory_usage]
+symbol = "󰍛 "
+style = "bg:#9ece6a fg:#1f2335"
+threshold = -1
+disabled = false
+# 改用 $ram，這是 WSL 唯一絕對能抓到的記憶體數值
+format = "[ $symbol$ram ]($style)"

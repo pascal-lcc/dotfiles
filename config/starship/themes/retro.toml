@@ -1,0 +1,21 @@
+format = """
+[┌───────────────────>](bold green)
+[│](bold green) $directory$git_branch$git_status
+[└─](bold green) $character"""
+
+[directory]
+style = "bold green"
+format = "[$path]($style) "
+
+[git_branch]
+symbol = " "
+style = "bold yellow"
+format = "at [$symbol$branch]($style) "
+
+[git_status]
+style = "bold red"
+format = "[$all_status]($style) "
+
+[character]
+success_symbol = "[#](bold green)"
+error_symbol = "[!](bold red)"

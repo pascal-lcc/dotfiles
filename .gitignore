@@ -1,0 +1,23 @@
+# 排除 Windows 系統暫存檔
+Thumbs.db
+desktop.ini
+
+# 排除 Sublime 的暫存 workspace (這會隨電腦不同而變動)
+*.sublime-workspace
+
+# 排除 Python 暫存 (如果你在 WSL 跑 multi_tabs.py 測試)
+__pycache__/
+*.pyc
+
+/fonts/*.ttf
+/fonts/*.otf
+/config/**/backdrops/*.jpg
+/config/**/backdrops/*.png
+/config/**/backdrops/*.jpeg
+/config/gh/hosts.yml
+/config/scoop/config.json
+/git/.gitconfig_local
+config/starship.toml
+config/starship/themes/starship.toml.*
+.wezterm_dynamic_ssh.lua
+nvim-pack-lock.json

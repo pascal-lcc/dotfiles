@@ -1,0 +1,38 @@
+Host *
+    SendEnv LC_TERM_BRAND
+    ConnectTimeout 7
+    ServerAliveInterval 60
+    AddKeysToAgent yes
+
+    # # Socket 存放路徑 (Windows 下建議放在 .ssh 裡的一個目錄)
+    # # %r=用戶名, %h=主機, %p=Port，確保唯一性
+    # ControlPath ~/.ssh/sockets/%r@%h:%p
+    # ControlPath ~/.ssh/S.%C
+    # ControlPath ~/.ssh/sockets/%r@%h:%p
+    # ControlPath ~/.ssh/sockets/S-%r-%h-%p
+    #
+    # 即使視窗關了，連線也維持 10 分鐘，這期間連線都不用密碼
+    #
+    # # 搭配 Port Forwarding
+    RemoteForward 9999 localhost:9999
+    # # LocalCommand echo "SSH ControlMaster established via %~"
+    #
+
+Match exec "test -z $COMSPEC"
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h:%p
+    ControlPersist 10m    
+    # 這裡可以用 PermitLocalCommand，但 Linux 下直接用 shell echo 即可
+    PermitLocalCommand yes
+    LocalCommand [ -t 1 ] && echo "🚀 Multiplexing Enabled" > /dev/null 2>&1
+
+    #Match host hostname1.example.com,hostname2.example.com !exec "nc -zw1 localhost 52698"
+    #    LocalForward 52698 remotehost:52698
+
+    #Match host hostname3,hostname4 !exec "nc -zw1 localhost 1050"
+    #    DynamicForward 1050
+
+    ## Test for multiple ports
+    #Match host hostname5 !exec "nc -zw1 localhost 52698 && nc -zw1 localhost 1050"
+    #    LocalForward 52698 remotehost:52698
+    #    DynamicForward 1050

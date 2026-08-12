@@ -1,0 +1,357 @@
+scan_timeout = 30
+
+"$schema" = 'https://starship.rs/config-schema.json'
+
+add_newline = true
+
+palette = 'nordic'
+# palette = 'gruvbox_dark'
+
+format = """
+[╭─](bold green_bright)\
+$username\
+$hostname\
+$localip\
+$shlvl\
+$directory\
+$git_branch\
+$git_commit\
+$git_state\
+$git_metrics\
+$git_status\
+$direnv\
+$env_var\
+$cmd_duration\
+$jobs\
+$os\
+$container\
+$netns\
+$shell\
+$fill\
+$custom\
+$line_break\
+[╰─](bold green_bright)\
+$character\
+$status\
+$sudo"""
+
+
+[time]
+disabled = false
+format = '[󰖕 $time]($style)'
+time_format = "%m/%d %H:%M:%S"
+style = "fg:gray4"
+
+[custom.time]
+command = """
+HOUR=$(date +%H)
+TIME=$(date "+%m/%d %H:%M:%S")
+if [ $HOUR -lt 6 ]; then ICON="⏾"; elif [ $HOUR -lt 12 ]; then ICON="☼"; elif [ $HOUR -lt 18 ]; then ICON="󰖕"; else ICON="\uf186"; fi
+echo "$ICON $TIME"
+"""
+when = true
+style = "fg:gray4" # 使用你 palette 裡的 gray4
+format = "[$output]($style)"
+
+[fill]
+symbol = ' '
+
+[direnv]
+disabled = true
+
+[package]
+disabled = true
+
+
+
+# left
+# ------------------------------------------
+
+[character] 
+success_symbol = '[](bold green_bright)'
+error_symbol = '[](bold red_bright)'
+
+[cmd_duration]
+min_time = 2000
+format = ' [ $duration](bold yellow_bright) '
+show_milliseconds = true
+
+[directory]
+style = "fg:color_fg0" 
+# format = "[ $path ]($style)"
+format = "[ $path]($style)[$read_only]($read_only_style) "
+truncation_length = 3
+# truncation_symbol = " "
+truncation_symbol = "…/"
+truncate_to_repo = true
+read_only = " "
+read_only_style = "fg:color_fg0 bg:color_yellow"
+
+# read_only = " 󰌾"
+# read_only_style = "fg:bright-red"
+# truncation_length = 3
+# truncation_symbol = "…/"
+# format = "[ $path]($style)[$read_only]($read_only_style) "
+
+[directory.substitutions]
+"Documents" = "󰈙 "
+"Downloads" = " "
+"Music" = "󰝚 "
+"Pictures" = " "
+"Developer" = "󰲋 "
+"Code" = "󰲋 "
+
+[git_branch]
+format = '[$symbol$branch(:$remote_branch)](bold magenta_bright dimmed)'
+
+[git_status]
+style = 'bold magenta_bright dimmed'
+# 核心優化：把所有偵測變動的符號都設為空字串，或者直接停用
+ignore_submodules = true
+conflicted = "="
+ahead = "⇡"
+behind = "⇣"
+diverged = "⇕"
+up_to_date = ""
+untracked = ""      # 不要掃描未追蹤檔案（最耗時）
+stashed = ""
+modified = ""       # 不要掃描修改過的檔案
+staged = ""
+renamed = ""
+deleted = ""
+
+
+[shell]
+# format = '[ ](bold white0_reduce_blue)'
+format = '[❮](bold yellow)[$indicator]($style)[❯](bold yellow)'
+powershell_indicator = 'pwsh'
+fish_indicator = 'fish'
+bash_indicator = 'bash'
+unknown_indicator = 'mystery shell'
+style = 'cyan bold'
+disabled = false
+
+[status]
+disabled = false
+format = '[$status](bold red_base) '
+
+[sudo]
+disabled = false
+format = '[ sudo: ](bold red_bright)'
+
+# right
+# ------------------------------------------
+
+[docker_context]
+format = ' [ $context](bold blue1) '
+
+[c]
+symbol = " "
+style = "bg:color_blue"
+format = '[[ $symbol ](fg:color_fg0 bg:color_blue)]($style)'
+
+[cpp]
+symbol = " "
+style = "bg:color_blue"
+format = '[[ $symbol ](fg:color_fg0 bg:color_blue)]($style)'
+
+[dotnet]
+format = '[ ($version )](bold blue0) '
+version_format = 'v${major}.${minor}'
+
+[golang]
+format = '[ $version](bold cyan_bright) '
+version_format = 'v${major}.${minor}'
+
+[gradle]
+format = '[ ($version)](bold green_bright) '
+version_format = 'v${major}.${minor}'
+
+[java]
+format = '[ ${version}](bold red_bright) '
+version_format = 'v${major}.${minor}'
+
+[lua]
+format = '[ $version](bold yellow_bright) '
+version_format = 'v${major}.${minor}'
+
+[nodejs]
+format = ' [ ($version)](bold green_bright) '
+version_format = 'v${major}.${minor}'
+
+[pulumi]
+format = ' [󰆦 ($username@)$stack](bold yellow_bright) '
+version_format = 'v${major}.${minor}'
+
+[python]
+format = ' [ ${pyenv_prefix}(${version} )(\($virtualenv\) )](bold green_bright) '
+version_format = 'v${major}.${minor}'
+
+[rust]
+format = ' [󱘗 $version](bold orange_bright) '
+version_format = 'v${major}.${minor}'
+
+[terraform]
+format = ' [󰆩 $workspace](bold magenta_bright) '
+version_format = 'v${major}.${minor}'
+
+# Palette
+# ------------------------------------------
+[palettes.gruvbox_dark]
+color_fg0 = '#fbf1c7'
+color_fg1 = '#ebdbb2'
+color_bg0 = '#282828'
+color_bg1 = '#3c3836'
+color_bg2 = '#504945'
+color_bg3 = '#665c54'
+color_bg4 = '#7c6f64'
+color_blue = '#458588'
+color_aqua = '#689d6a'
+color_green = '#98971a'
+color_orange = '#d65d0e'
+color_purple = '#b16286'
+color_red = '#cc241d'
+color_yellow = '#d79921'
+color_bright_red = '#fb4934'
+color_bright_green = '#41FF00'
+color_bright_yellow = '#fabd2f'
+color_bright_blue = '#83a598'
+color_bright_purple = '#d3869b'
+color_bright_aqua = '#8ec07c'
+color_bright_orange = '#fe8019'
+color_light_grey = '#a89984'
+color_muddy_green = '#83a598'
+
+[palettes.nordic]
+
+# Blacks. Not in base Nord.
+black0 = '#191D24'
+black1 = '#1E222A'
+# Slightly darker than bg.  Very useful for certain popups
+black2 = '#222630'
+
+# Grays
+# This color is used on their website's dark theme.
+gray0 = '#242933'
+# Polar Night.
+gray1 = '#2E3440'
+gray2 = '#3B4252'
+gray3 = '#434C5E'
+gray4 = '#4C566A'
+
+# A light blue/gray.
+# From @nightfox.nvim.
+gray5 = '#60728A'
+
+# Dim white.
+# default fg, has a blue tint.
+white0_normal = '#BBC3D4'
+# less blue tint
+white0_reduce_blue = '#C0C8D8'
+
+# Snow storm.
+white1 = '#D8DEE9'
+white2 = '#E5E9F0'
+white3 = '#ECEFF4'
+
+# Frost.
+blue0 = '#5E81AC'
+blue1 = '#81A1C1'
+blue2 = '#88C0D0'
+
+cyan_base = '#8FBCBB'
+cyan_bright = '#9FC6C5'
+cyan_dim = '#80B3B2'
+
+# Aurora.
+# These colors are used a lot, so we need variations for them.
+# Base colors are from original Nord palette.
+red_base = '#BF616A'
+red_bright = '#C5727A'
+red_dim = '#B74E58'
+
+orange_base = '#D08770'
+orange_bright = '#D79784'
+orange_dim = '#CB775D'
+
+yellow_base = '#EBCB8B'
+yellow_bright = '#EFD49F'
+yellow_dim = '#E7C173'
+
+green_base = '#A3BE8C'
+green_bright = '#B1C89D'
+green_dim = '#97B67C'
+
+magenta_base = '#B48EAD'
+magenta_bright = '#BE9DB8'
+magenta_dim = '#A97EA1'
+
+color_fg0 = '#fbf1c7'
+color_fg1 = '#ebdbb2'
+color_bg0 = '#282828'
+color_bg1 = '#3c3836'
+color_bg2 = '#504945'
+color_bg3 = '#665c54'
+color_bg4 = '#7c6f64'
+color_blue = '#458588'
+color_aqua = '#689d6a'
+color_green = '#98971a'
+color_orange = '#d65d0e'
+color_purple = '#b16286'
+color_red = '#cc241d'
+color_yellow = '#d79921'
+color_bright_red = '#fb4934'
+color_bright_green = '#41FF00'
+color_bright_yellow = '#fabd2f'
+color_bright_blue = '#83a598'
+color_bright_purple = '#d3869b'
+color_bright_aqua = '#8ec07c'
+color_bright_orange = '#fe8019'
+color_light_grey = '#a89984'
+color_muddy_green = '#83a598'
+
+[os]
+disabled = false
+style = "fg:color_fg0"
+
+# orange_base = '#D08770'
+# orange_bright = '#D79784'
+# orange_dim = '#CB775D'
+[username]
+show_always = true
+style_user = "fg:color_fg0"
+# style_root = "bg:color_orange fg:color_fg0"
+style_root = "fg:color_fg0"
+format = '[ $user ]($style)'
+
+[battery]
+disabled = false
+full_symbol = "󰁹"
+charging_symbol = "󰂄"
+discharging_symbol = "󰂃"
+unknown_symbol = "󰁽"
+empty_symbol = "󰂎"
+format = "[[ $symbol ](fg:color_fg0 bg:color_red)]($style)"
+
+[os.symbols]
+Windows = "󰍲"
+Ubuntu = "󰕈"
+SUSE = ""
+Raspbian = "󰐿"
+Mint = "󰣭"
+Macos = "󰀵"
+Manjaro = ""
+Linux = "󰌽"
+Gentoo = "󰣨"
+Fedora = "󰣛"
+Alpine = ""
+Amazon = ""
+Android = ""
+Arch = "󰣇"
+Artix = "󰣇"
+EndeavourOS = ""
+CentOS = ""
+Debian = "󰣚"
+Redhat = "󱄛"
+RedHatEnterprise = "󱄛"
+Pop = ""

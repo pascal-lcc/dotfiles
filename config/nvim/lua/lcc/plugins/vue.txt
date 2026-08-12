@@ -1,0 +1,10 @@
+# 1. 建立空目錄，假裝是 Mason 裝好的
+mkdir -p /home/pascual/.local/share/nvim/mason/packages/vue-language-server
+cd /home/pascual/.local/share/nvim/mason/packages/vue-language-server
+
+# 2. 初始化 npm 環境
+npm init -y
+
+# 3. 灌入老版 Volar 與相容的 TS 5.x 核心庫（最關鍵的相容黃金組合）
+npm install @vue/language-server@1.8.27
+npm install typescript@5.4.5
