@@ -433,13 +433,19 @@ else
 fi
 
 _FULL_PATH=$(readlink -f "$_CURRENT_SCRIPT" 2>/dev/null || realpath "$_CURRENT_SCRIPT" 2>/dev/null)
-if [[ "$_FULL_PATH" == *"/dotfiles"* ]]; then
-    # 刪除 "dotfiles" 之後的所有字元，保留到 "dotfiles" 為止
-    export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+# 同時相容 .dotfiles 與 dotfiles 的路徑識別
+if [[ "$_FULL_PATH" == *"/.dotfiles"* || "$_FULL_PATH" == *"/dotfiles"* ]]; then
+    if [[ "$_FULL_PATH" == *"/.dotfiles"* ]]; then
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/.dotfiles*}/.dotfiles"
+    else
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+    fi
+    
+    # 順便連 RUNTIME_DIR 都有了 (dotfiles 的上一層)
     export RUNTIME_DIR="${MY_DOTFILES_ROOT%/*}"
     
+    # 建立快捷 Alias
     alias dot="cd $MY_DOTFILES_ROOT"
-    # 你原本的 alias 是 cd $RUNTIME_DIR/dotfiles，其實就是 DOTFILES_ROOT
 fi
 
 # 清理暫存變數，保持環境乾淨

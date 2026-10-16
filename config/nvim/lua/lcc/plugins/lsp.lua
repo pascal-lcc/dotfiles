@@ -1,6 +1,6 @@
 local ptool = require("lcc.tools")
 local log = ptool.log("~/nvim.log")
-
+local augroup = vim.api.nvim_create_augroup("UserConfig", { clear = true })
 _G.log = log
 
 vim.pack.add({
@@ -129,7 +129,7 @@ vim.pack.add({
                 local blink_ok, blink = pcall(require, "blink.cmp")
                 local my_capabilities = blink_ok and blink.get_lsp_capabilities() or nil
 
-                vim.wo.signcolumn = "yes" -- 保持圖示列開啟
+                vim.wo.signcolumn = "yes:2" -- 保持圖示列開啟
 
                 -- 🌟 最新版設定圖示的標準寫法：直接塞進 vim.diagnostic.config
                 vim.diagnostic.config({
@@ -264,10 +264,32 @@ vim.o.mouse = "a"
 -- vim.o.updatetime = 500
 
 vim.api.nvim_create_autocmd("LspAttach", {
+    group = augroup,
     callback = function(args)
         local opts = { buffer = args.buf }
         vim.keymap.set("n", "gd", vim.lsp.buf.definition, opts)
         vim.keymap.set("n", "gr", vim.lsp.buf.references, opts)
+        vim.keymap.set("n", "<leader>nd", function()
+            vim.diagnostic.jump({ count = 1 })
+        end, opts)
+
+        vim.keymap.set("n", "<leader>pd", function()
+            vim.diagnostic.jump({ count = -1 })
+        end, opts)
+
+        vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
+
+        -- vim.keymap.set("n", "<leader>D", function()
+        --     vim.diagnostic.open_float({ scope = "line" })
+        -- end, opts)
+        --
+        -- vim.keymap.set("n", "<leader>d", function()
+        --     vim.diagnostic.open_float({ scope = "cursor" })
+        -- end, opts)
+        -- vim.keymap.set("n", "<leader>gS", function()
+        --     vim.cmd("vsplit")
+        --     vim.lsp.buf.definition()
+        -- end, opts)
 
         vim.api.nvim_create_autocmd({ "CursorHold", "CursorHoldI" }, {
             buffer = args.buf,
@@ -362,6 +384,33 @@ if ok then
     vim.keymap.set("n", "[t", "<cmd>tabprevious<cr>", { desc = "上一個 Tab" })
     vim.keymap.set("n", "]t", "<cmd>tabnext<cr>", { desc = "下一個 Tab" })
     vim.keymap.set("n", "<leader>bd", "<cmd>bdelete<cr>", { desc = "Delete Buffer" })
+    vim.g.last_tab = 1
+    vim.g.current_tab = vim.fn.tabpagenr()
+    -- 2. 透過 autocmd 在離開 Tab 時自動記錄
+    vim.api.nvim_create_autocmd({ "TabLeave", "TabEnter" }, {
+        callback = function()
+            local curr = vim.fn.tabpagenr()
+            if vim.g.current_tab ~= curr then
+                vim.g.last_tab = vim.g.current_tab
+                vim.g.current_tab = curr
+            end
+        end,
+    })
+    -- 3. 設定快捷鍵（例如用 <leader>tt 來回切換上一個 Tab）
+    vim.keymap.set("n", "<leader>tt", function()
+        local total_tabs = vim.fn.tabpagenr("$")
+        -- 檢查 last_tab 是否小於等於目前總 Tab 數（確保該 Tab 還活著）
+        if vim.g.last_tab <= total_tabs then
+            vim.cmd("tabnext " .. vim.g.last_tab)
+        end
+    end, { desc = "Switch to last active tab safely" })
+
+    vim.keymap.set("i", "<C-t>", function()
+        local total_tabs = vim.fn.tabpagenr("$")
+        if vim.g.last_tab and vim.g.last_tab <= total_tabs then
+            vim.cmd("tabnext " .. vim.g.last_tab)
+        end
+    end, { desc = "Switch to last active tab from Insert mode" })
     -- vim.keymap.set('n', 'H', '<cmd>tabprevious<cr>', { desc = '上一個分頁' })
     -- vim.keymap.set('n', 'L', '<cmd>tabnext<cr>', { desc = '下一個分頁' })
 else
@@ -539,21 +588,32 @@ vim.keymap.set({ "n", "i" }, "<C-LeftRelease>", function()
     end
 end)
 
-vim.api.nvim_create_autocmd("ModeChanged", {
-    pattern = "n:i", -- 偵測從 Normal (n) 切換到 Insert (i) 的瞬間
-    callback = function()
-        -- 撈出目前所有的視窗，只要是浮動窗就立刻關閉，還主視窗一個乾淨的輸入環境
-        for _, win in ipairs(vim.api.nvim_list_wins()) do
-            local config = vim.api.nvim_win_get_config(win)
-            if config.relative and config.relative ~= "" then
-                pcall(vim.api.nvim_win_close, win, true)
-            end
-        end
-    end,
-})
-
 vim.keymap.set("n", "gD", function()
     -- 呼叫我們上一輪寫好的大圓滿版 handle_mouse_jump
     -- 模擬滑鼠傳入的 argument：mouse.winid = 當前視窗, is_insert = false, do_vsplit = true
     handle_mouse_jump({ winid = vim.api.nvim_get_current_win() }, false, true)
 end, { desc = "LSP vsplit definition (Keyboard)" })
+
+vim.api.nvim_create_autocmd("ModeChanged", {
+    pattern = "n:i",
+    callback = function()
+        -- 取得當前準備進入 Insert 模式的視窗 ID
+        local current_win = vim.api.nvim_get_current_win()
+
+        -- 歷遍所有浮動視窗
+        for _, win in ipairs(vim.api.nvim_list_wins()) do
+            local config = vim.api.nvim_win_get_config(win)
+            -- 確保它是浮動視窗，且不是我們自己正準備互動的主視窗
+            if config.relative and config.relative ~= "" and win ~= current_win then
+                local buf = vim.api.nvim_win_get_buf(win)
+                local ft = vim.api.nvim_get_option_value("filetype", { buf = buf })
+
+                -- 判斷是否為 LSP hover / diagnostic 常見的浮動視窗類型
+                -- (通常 lsp hover 內容會是 markdown 或 help 格式)
+                if ft == "markdown" or ft == "lspinfo" or ft == "help" then
+                    pcall(vim.api.nvim_win_close, win, true)
+                end
+            end
+        end
+    end,
+})

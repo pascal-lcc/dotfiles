@@ -1,5 +1,6 @@
 require("lcc.basic")
 require("lcc.env")
+require("lcc.string_replace")
 require("lcc.plugins.theme")
 require("lcc.plugins.lsp")
 require("lcc.plugins.mini")

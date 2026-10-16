@@ -260,7 +260,7 @@ if ok_pick then
 
     vim.keymap.set("n", "<leader>tc", "<cmd>tabclose<cr>", { desc = "Close Current Tab" })
     vim.keymap.set("n", "<leader>tn", "<cmd>tabnew<cr>", { desc = "Open New Tab" })
-    vim.keymap.set("i", "<C-t>", "<cmd>tabnew<cr>", { desc = "Open New Tab" })
+    -- vim.keymap.set("i", "<C-t>", "<cmd>tabnew<cr>", { desc = "Open New Tab" })
 
     vim.keymap.set("n", "H", "<cmd>bprevious<cr>", { desc = "Buffer (左)" })
     vim.keymap.set("n", "L", "<cmd>bnext<cr>", { desc = "Buffer (右)" })
