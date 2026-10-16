@@ -27,8 +27,12 @@ _FULL_PATH=$(readlink -f "$_CURRENT_FILE" 2>/dev/null || realpath "$_CURRENT_FIL
 
 # 2. 抓取到 "dotfiles" 為止的所有字元 (不使用 Regex 陣列)
 # 邏輯：利用 %% (從右邊開始刪除最長匹配)，砍掉 /dotfiles 之後的所有東西
-if [[ "$_FULL_PATH" == *"/dotfiles"* ]]; then
-    export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+if [[ "$_FULL_PATH" == *"/.dotfiles"* || "$_FULL_PATH" == *"/dotfiles"* ]]; then
+    if [[ "$_FULL_PATH" == *"/.dotfiles"* ]]; then
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/.dotfiles*}/.dotfiles"
+    else
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+    fi
     
     # 順便連 RUNTIME_DIR 都有了 (dotfiles 的上一層)
     export RUNTIME_DIR="${MY_DOTFILES_ROOT%/*}"
@@ -36,6 +40,7 @@ if [[ "$_FULL_PATH" == *"/dotfiles"* ]]; then
     # 建立快捷 Alias
     alias dot="cd $MY_DOTFILES_ROOT"
 fi
+
 
 # 清理暫存變數
 unset _CURRENT_FILE _FULL_PATH

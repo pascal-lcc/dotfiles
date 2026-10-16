@@ -129,7 +129,7 @@ vim.pack.add({
                 local blink_ok, blink = pcall(require, "blink.cmp")
                 local my_capabilities = blink_ok and blink.get_lsp_capabilities() or nil
 
-                vim.wo.signcolumn = "yes" -- 保持圖示列開啟
+                vim.wo.signcolumn = "yes:2" -- 保持圖示列開啟
 
                 -- 🌟 最新版設定圖示的標準寫法：直接塞進 vim.diagnostic.config
                 vim.diagnostic.config({
@@ -362,6 +362,33 @@ if ok then
     vim.keymap.set("n", "[t", "<cmd>tabprevious<cr>", { desc = "上一個 Tab" })
     vim.keymap.set("n", "]t", "<cmd>tabnext<cr>", { desc = "下一個 Tab" })
     vim.keymap.set("n", "<leader>bd", "<cmd>bdelete<cr>", { desc = "Delete Buffer" })
+    vim.g.last_tab = 1
+    vim.g.current_tab = vim.fn.tabpagenr()
+    -- 2. 透過 autocmd 在離開 Tab 時自動記錄
+    vim.api.nvim_create_autocmd({ "TabLeave", "TabEnter" }, {
+        callback = function()
+            local curr = vim.fn.tabpagenr()
+            if vim.g.current_tab ~= curr then
+                vim.g.last_tab = vim.g.current_tab
+                vim.g.current_tab = curr
+            end
+        end,
+    })
+    -- 3. 設定快捷鍵（例如用 <leader>tt 來回切換上一個 Tab）
+    vim.keymap.set("n", "<leader>tt", function()
+        local total_tabs = vim.fn.tabpagenr("$")
+        -- 檢查 last_tab 是否小於等於目前總 Tab 數（確保該 Tab 還活著）
+        if vim.g.last_tab <= total_tabs then
+            vim.cmd("tabnext " .. vim.g.last_tab)
+        end
+    end, { desc = "Switch to last active tab safely" })
+
+    vim.keymap.set("i", "<C-t>", function()
+        local total_tabs = vim.fn.tabpagenr("$")
+        if vim.g.last_tab and vim.g.last_tab <= total_tabs then
+            vim.cmd("tabnext " .. vim.g.last_tab)
+        end
+    end, { desc = "Switch to last active tab from Insert mode" })
     -- vim.keymap.set('n', 'H', '<cmd>tabprevious<cr>', { desc = '上一個分頁' })
     -- vim.keymap.set('n', 'L', '<cmd>tabnext<cr>', { desc = '下一個分頁' })
 else

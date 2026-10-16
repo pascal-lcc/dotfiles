@@ -33,9 +33,9 @@ cleanup() {
 
     # 2. 重置終端機狀態
     stty sane
-    
+
     # 3. 如果是正常結束，通常不需要 sudo -k (除非你希望下次立刻又要密碼)
-    # sudo -k 
+    # sudo -k
 }
 
 trap 'cleanup EXIT' EXIT
@@ -48,7 +48,7 @@ try_run() {
     local desc=$1
     shift
     echo "🚀 執行: $desc..."
-    
+
     if ! "$@"; then
         echo -e "${RED}[Soft Error]${NC} $desc 失敗，但我們將嘗試繼續..."
         SOFT_ERROR_COUNT=$((SOFT_ERROR_COUNT + 1))
@@ -62,13 +62,16 @@ if [ "$EUID" -ne 0 ]; then
     echo "Requesting sudo privileges for deployment..."
     sudo -v
     # 背景續期
-    ( while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done ) 2>/dev/null &
+    (while true; do
+        sudo -n true
+        sleep 60
+        kill -0 "$$" || exit
+    done) 2>/dev/null &
     SUDO_KEEP_ALIVE_PID=$!
     # while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
     # 🌟 關鍵修正：捕捉剛才那個背景程序的 PID
     # SUDO_PID=$!
 fi
-
 
 # ----------------------------------------------------------------
 # Function: init_windows_paths
@@ -90,7 +93,7 @@ init_windows_env() {
     # Fallback (保底機制)
     [ -z "$WIN_DIR_BASE" ] && export WIN_DIR_BASE=$(wslpath -u "C:\Windows" 2>/dev/null)
 
-    if  [ -z "$WIN_DIR_BASE" ]; then
+    if [ -z "$WIN_DIR_BASE" ]; then
         echo "❌ 找不到 Windows 路徑，中斷此 function。"
         return 0
     fi
@@ -130,13 +133,11 @@ NC='\033[0m' # No Color
 echo -e "${GREEN}[Detecting]${NC} Windows environment..."
 init_windows_env
 
-
 # --- 1. 路徑抓取 ---
 # 因為腳本在 script/ 目錄下，所以根目錄是上一層
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 DOT_ROOT=$(realpath "$SCRIPT_DIR/..")
 USER_HOME=$HOME
-
 
 WIN_GIT_BIN="$SCOOP_ROOT/apps/git/current/mingw64/bin"
 WIN_GIT_CMD="$SCOOP_ROOT/apps/git/current/cmd"
@@ -149,8 +150,6 @@ IS_WSL=false
 if [ -f /proc/sys/fs/binfmt_misc/WSLInterop ]; then
     IS_WSL=true
 fi
-
-
 
 # --- 2. Starship 部署 (含安裝與 rsync) ---
 deploy_starship() {
@@ -173,17 +172,16 @@ deploy_starship() {
 
     safe_link "$wsl_config" "$CONFIG_DIR/starship.toml"
 
-
     if [ "$IS_WSL" = true ]; then
         # rsync -au --delete "$DOT_ROOT/config/starship/themes/" "$CONFIG_DIR/starship/themes/"
-        safe_link "$DOT_ROOT/config/starship/themes" "$CONFIG_DIR/starship/themes"        
+        safe_link "$DOT_ROOT/config/starship/themes" "$CONFIG_DIR/starship/themes"
         # [ ! -f "$CONFIG_DIR/starship.toml" ] && safe_link "$s_starship" "$CONFIG_DIR/starship.toml"
         safe_link "$wsl_config" "$CONFIG_DIR/starship.toml"
         # cp -u "$CONFIG_DIR/starship/themes/space.toml" "$CONFIG_DIR/starship.toml"
     else
-        safe_link  "$DOT_ROOT/config/starship/themes" "$CONFIG_DIR/starship/themes"        
+        safe_link "$DOT_ROOT/config/starship/themes" "$CONFIG_DIR/starship/themes"
         safe_link "$wsl_config" "$CONFIG_DIR/starship.toml"
-    fi    
+    fi
 }
 
 # --- 3. 核心：WSL Kernel 部署 (你最重視的部分) ---
@@ -197,14 +195,14 @@ deploy_kernel() {
     local REPO="pascal-lcc/dotfiles"
 
     if [ ! -f "$RUNTIME_DIR/$bzImage" ]; then
-        echo "Kernel ["$RUNTIME_DIR/$bzImage"] asset not found. Attempting download via gh..."        
+        echo "Kernel ["$RUNTIME_DIR/$bzImage"] asset not found. Attempting download via gh..."
         if command -v gh >/dev/null 2>&1; then
             echo "gh release download "$KERNEL_VERSION" --repo "$REPO" --pattern "*" --dir "$RUNTIME_DIR" --clobber"
             # gh release download "$KERNEL_VERSION" --repo "$REPO" --pattern "*" --dir "$RUNTIME_DIR" --clobber
-            if ! gh release download "$KERNEL_VERSION" --repo "$REPO" --pattern "*" --dir "$RUNTIME_DIR" --clobber ; then
+            if ! gh release download "$KERNEL_VERSION" --repo "$REPO" --pattern "*" --dir "$RUNTIME_DIR" --clobber; then
                 echo -e "${RED}[Error]${NC} GitHub CLI 尚未登入或下載失敗。"
                 echo "請執行: gh auth login"
-                exit 1  # 這裡會觸發你的 trap cleanup
+                exit 1 # 這裡會觸發你的 trap cleanup
             fi
         else
             echo "Error: gh CLI not found. Please install gh to download kernel."
@@ -213,7 +211,7 @@ deploy_kernel() {
     # 建立 Windows 側連結 (供 .wslconfig 讀取)
     if [ -f "$RUNTIME_DIR/$bzImage" ]; then
         echo "--- Checking Kernel Symlink ---"
-        
+
         # 1. 取得資料夾的 Windows 路徑 (不要直接對檔案跑 wslpath)
         local win_runtime_dir=$(wslpath -w "$RUNTIME_DIR")
 
@@ -267,12 +265,11 @@ deploy_kernel() {
 
     local pkg_ver=$(echo "$modules_tgz" | sed 's/module-//;s/.tgz//')
 
-
     if [ -f "$RUNTIME_DIR/$modules_tgz" ]; then
         if [ ! -d "/lib/modules/$pkg_ver" ]; then
             echo "Pre-installing modules for version $pkg_ver..."
             sudo tar -xvzf "$RUNTIME_DIR/$modules_tgz" -C /lib/modules
-            
+
             # 關鍵：即使目前不是這個核心，只要路徑對了，depmod 指令可以指定版本
             sudo depmod -a "$pkg_ver"
             echo "Modules installed. They will be active after WSL restart."
@@ -291,7 +288,8 @@ render_wslconfig() {
     local WIN_MEM_RAW=$("$WIN_PS" -NoProfile -Command "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory" | tr -d '\r')
     local TOTAL_GB=$(awk "BEGIN {print int($WIN_MEM_RAW / 1024 / 1024 / 1024)}")
 
-    local WSL_CPU=$((WIN_CPU - 2)); [ $WSL_CPU -lt 2 ] && WSL_CPU=2
+    local WSL_CPU=$((WIN_CPU - 2))
+    [ $WSL_CPU -lt 2 ] && WSL_CPU=2
     local WSL_MEM_GB=$(awk "BEGIN {print int($TOTAL_GB * 0.75)}")
     local ZFS_MAX=$(awk "BEGIN {print int($WSL_MEM_GB * 0.75 * 1024 * 1024 * 1024)}")
     local ZFS_MIN=$(awk "BEGIN {print int($WSL_MEM_GB * 0.25 * 1024 * 1024 * 1024)}")
@@ -305,24 +303,24 @@ render_wslconfig() {
         -e "s/{{ZFS_MAX}}/$ZFS_MAX/g" \
         -e "s/{{ZFS_MIN}}/$ZFS_MIN/g" \
         -e "s|{{KERNEL_PATH}}|$KERNEL_PATH|g" \
-        "$DOT_ROOT/windows/.wslconfig.tmpl" > "$WIN_HOME_PATH/.wslconfig"
+        "$DOT_ROOT/windows/.wslconfig.tmpl" >"$WIN_HOME_PATH/.wslconfig"
     echo "Generated .wslconfig for ${TOTAL_GB}GB RAM system."
-    echo "--- Rendering .wslconfig ---"    
+    echo "--- Rendering .wslconfig ---"
 }
 
 system_update() {
     echo "🚀 Starting System Upgrade for Proxmox/Debian..."
     # 確保抓到最新清單
     sudo apt-get update -qq
-    
+
     # 執行升級
     # --with-new-pkgs 允許安裝新套件（對 kernel 更新很重要）
     sudo apt-get dist-upgrade -y
-    
+
     # 清理舊的、不需要的包（節省硬碟空間）
     sudo apt-get autoremove -y
     sudo apt-get autoclean
-    
+
     echo "✅ Upgrade finished. If kernel was updated, please consider REBOOTING."
 }
 
@@ -349,7 +347,7 @@ install_pkg() {
         fi
         # 更新完後，將旗標設為 true
         PKG_UPDATED=true
-	echo "Apt update finished." # 這行會強迫觸發畫面更新，解決「假死」問題
+        echo "Apt update finished." # 這行會強迫觸發畫面更新，解決「假死」問題
     fi
 
     # 2. 執行實際的安裝指令
@@ -376,7 +374,7 @@ deploy_neovim_stable() {
     local arch=$(uname -m)
     local nvim_arch="x86_64"
     [[ "$arch" == "aarch64" ]] && nvim_arch="arm64"
-    
+
     local fuse_pkg="libfuse2"
     [ -n "$(command -v dnf)" ] && fuse_pkg="fuse-libs"
     [ -n "$(command -v pacman)" ] && fuse_pkg="fuse2"
@@ -416,35 +414,35 @@ deploy_neovim_stable() {
 
 deploy_neovim_nightly() {
     deploy_neovim_nightly() {
+        echo "--- [Nightly] Neovim 0.12 Versioned ---"
+
+        local arch=$(uname -m)
+        local nvim_arch="x86_64"
+        [[ "$arch" == "aarch64" ]] && nvim_arch="arm64"
+
+        local BASE_DIR="/opt/nvim-releases"
+        local LINK_PATH="/usr/local/bin/nvim"
+        local DATE_TAG=$(date +%Y%m%d)
+        local TARGET_APPIMAGE="$BASE_DIR/nvim-nightly-${DATE_TAG}.appimage"
+
+        # 1. 檢查今日版是否已下載
+        if [ ! -f "$TARGET_APPIMAGE" ]; then
+            echo "🚀 Downloading today's Nightly (0.12-dev)..."
+            local download_url="https://github.com/neovim/neovim/releases/download/nightly/nvim-linux-${nvim_arch}.appimage"
+            sudo curl -fLo "$TARGET_APPIMAGE" "$download_url"
+            sudo chmod +x "$TARGET_APPIMAGE"
+        fi
+
+        # 2. 切換連結
+        sudo ln -sf "$TARGET_APPIMAGE" "$LINK_PATH"
+        echo "✅ Switched to Nightly ($DATE_TAG)"
+    }
     echo "--- [Nightly] Neovim 0.12 Versioned ---"
 
     local arch=$(uname -m)
     local nvim_arch="x86_64"
     [[ "$arch" == "aarch64" ]] && nvim_arch="arm64"
-    
-    local BASE_DIR="/opt/nvim-releases"
-    local LINK_PATH="/usr/local/bin/nvim"
-    local DATE_TAG=$(date +%Y%m%d)
-    local TARGET_APPIMAGE="$BASE_DIR/nvim-nightly-${DATE_TAG}.appimage"
 
-    # 1. 檢查今日版是否已下載
-    if [ ! -f "$TARGET_APPIMAGE" ]; then
-        echo "🚀 Downloading today's Nightly (0.12-dev)..."
-        local download_url="https://github.com/neovim/neovim/releases/download/nightly/nvim-linux-${nvim_arch}.appimage"
-        sudo curl -fLo "$TARGET_APPIMAGE" "$download_url"
-        sudo chmod +x "$TARGET_APPIMAGE"
-    fi
-
-    # 2. 切換連結
-    sudo ln -sf "$TARGET_APPIMAGE" "$LINK_PATH"
-    echo "✅ Switched to Nightly ($DATE_TAG)"
-}
-    echo "--- [Nightly] Neovim 0.12 Versioned ---"
-
-    local arch=$(uname -m)
-    local nvim_arch="x86_64"
-    [[ "$arch" == "aarch64" ]] && nvim_arch="arm64"
-    
     local BASE_DIR="/opt/nvim-releases"
     local LINK_PATH="/usr/local/bin/nvim"
     local DATE_TAG=$(date +%Y%m%d)
@@ -467,9 +465,9 @@ deploy_neovim_nightly() {
 install_from_github() {
     local repo=$1
     local app=$2
-    local file_type=$3   # tar.gz, deb, gz
-    local method=$4      # binary, dpkg, gz_binary
-    
+    local file_type=$3 # tar.gz, deb, gz
+    local method=$4    # binary, dpkg, gz_binary
+
     echo "Package '$app' not found or outdated. Falling back to GitHub ($repo)..."
 
     # 1. 統一處理架構偵測
@@ -478,7 +476,7 @@ install_from_github() {
     if [ "$arch" = "x86_64" ]; then
         [ "$file_type" = "deb" ] && arch="amd64" || arch="x86_64"
         # 針對 tree-sitter 官方命名的微調 (官方用 linux-x64.gz)
-        [ "$app" = "tree-sitter" ] && arch="x64" 
+        [ "$app" = "tree-sitter" ] && arch="x64"
     elif [ "$arch" = "aarch64" ] || [ "$arm64" = "arm64" ]; then
         arch="arm64"
     else
@@ -495,11 +493,11 @@ install_from_github() {
 
     # 3. 過濾出下載 URL
     local download_url
-    download_url=$(curl -s "https://api.github.com/repos/${repo}/releases/latest" \
-        | grep -oP '"browser_download_url": "\K[^"]*' \
-        | grep -i "$arch" \
-        | grep -i "$file_type" \
-        | head -n 1)
+    download_url=$(curl -s "https://api.github.com/repos/${repo}/releases/latest" |
+        grep -oP '"browser_download_url": "\K[^"]*' |
+        grep -i "$arch" |
+        grep -i "$file_type" |
+        head -n 1)
 
     if [ -z "$download_url" ]; then
         echo "Error: 在 GitHub 上找不到適合 ${arch} 的 ${file_type} 安裝檔。"
@@ -544,7 +542,7 @@ deploy_linux_apps() {
     echo "--- Checking Linux Packages ---"
     local apps=(
         "git" "zoxide" "fzf" "ripgrep" "tmux" "zsh" "fuse3"
-        "rsync" "curl" "unzip" "jq" "poppler-utils" 
+        "rsync" "curl" "unzip" "jq" "poppler-utils"
         "imagemagick" "ffmpeg" "p7zip-full" "fd-find" "gh"
         "chafa" "lazygit" "fastfetch" "gettext"
         "python3" "python3-pip" "python3-venv"
@@ -581,45 +579,55 @@ deploy_linux_apps() {
         local check_cmd="$app"
         [ "$app" = "tree-sitter-cli" ] && check_cmd="tree-sitter"
 
+        echo -n "[*] 正在檢查 $app ... "
+
         # 核心防禦：如果指令不存在，或者它是 tree-sitter 但「版本太舊不支援 build」
-        if ! command -v "$check_cmd" >/dev/null 2>&1 || \
-           { [ "$check_cmd" = "tree-sitter" ] && ! tree-sitter build --help >/dev/null 2>&1; }; then
-            
+        if ! command -v "$check_cmd" >/dev/null 2>&1 ||
+            { [ "$check_cmd" = "tree-sitter" ] && ! tree-sitter build --help >/dev/null 2>&1; }; then
+
             # 特殊處理 A：fd-find 的指令名稱是 fdfind
             if [ "$app" = "fd-find" ] && command -v fdfind >/dev/null 2>&1; then
+                echo "  ->已安裝 (指令為 fdfind)"
                 continue
             fi
 
-            # 🛠️ 嘗試用系統包管理器安裝 (如果本來就有舊版，我們跳過此步，直接走 GitHub 升級)
+            #  嘗試用系統包管理器安裝 (如果本來就有舊版，我們跳過此步，直接走 GitHub 升級)
             local apt_success=false
             if [ "$check_cmd" != "tree-sitter" ]; then
+                echo "  ->嘗試透過系統套件管理器安裝 $app..."
                 if install_pkg "$app" >/dev/null 2>&1; then
                     apt_success=true
+                    echo "->透過系統套件管理器安裝成功！"
                 fi
             fi
 
             if [ "$apt_success" = "false" ]; then
-                
+
                 # 一行指令搞定 Tree-sitter 完美升級/安裝
                 if [ "$app" = "tree-sitter" ] || [ "$app" = "tree-sitter-cli" ]; then
+                    echo "  -> 透過 GitHub 下載安裝 Tree-sitter..."
                     install_from_github "tree-sitter/tree-sitter" "tree-sitter" "gz" "gz_binary"
                     continue
                 fi
 
                 # 一行指令搞定 Lazygit
                 if [ "$app" = "lazygit" ]; then
+                    echo "   -> 透過 GitHub 下載安裝 Lazygit..."
                     install_from_github "jesseduffield/lazygit" "lazygit" "tar.gz" "binary"
                     continue
                 fi
 
                 # 一行指令搞定 Fastfetch
                 if [ "$app" = "fastfetch" ]; then
+                    echo "    -> 透過 GitHub 下載安裝 Fastfetch..."
                     install_from_github "fastfetch-cli/fastfetch" "fastfetch" "deb" "dpkg"
                     continue
                 fi
 
                 echo "Error: $app 安裝失敗。"
             fi
+        else
+            echo "已安裝 (跳過)"
         fi
     done
 
@@ -627,14 +635,14 @@ deploy_linux_apps() {
     if command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
         echo "Creating symlink for fd..."
         safe_link "$(command -v fdfind)" /usr/local/bin/fd
-    fi    
+    fi
     # Yazi 建議手動安裝最新版，此處僅提醒
-echo "--- Installing Apps (Yazi) ---"
+    echo "--- Installing Apps (Yazi) ---"
     if ! command -v yazi >/dev/null 2>&1; then
         echo "Fetching latest Yazi download URL..."
         local yazi_url
-        yazi_url=$(curl -s "https://api.github.com/repos/sxyazi/yazi/releases/latest" \
-            | grep -oP '"browser_download_url": "\K[^"]*x86_64-unknown-linux-gnu\.zip')
+        yazi_url=$(curl -s "https://api.github.com/repos/sxyazi/yazi/releases/latest" |
+            grep -oP '"browser_download_url": "\K[^"]*x86_64-unknown-linux-gnu\.zip')
 
         if [ -n "$yazi_url" ]; then
             echo "Downloading Yazi from: $yazi_url"
@@ -659,8 +667,8 @@ echo "--- Installing Apps (Yazi) ---"
     if ! command -v stylua >/dev/null 2>&1; then
         echo "Installing StyLua (Lua Formatter)..."
         local stylua_url
-        stylua_url=$(curl -s "https://api.github.com/repos/JohnnyMorganz/StyLua/releases/latest" \
-            | grep -oP '"browser_download_url": "\K[^"]*linux-x86_64\.zip')
+        stylua_url=$(curl -s "https://api.github.com/repos/JohnnyMorganz/StyLua/releases/latest" |
+            grep -oP '"browser_download_url": "\K[^"]*linux-x86_64\.zip')
 
         if [ -n "$stylua_url" ]; then
             if curl -fLo /tmp/stylua.zip "$stylua_url"; then
@@ -679,7 +687,7 @@ echo "--- Installing Apps (Yazi) ---"
     #     if command -v apt-get >/dev/null 2>&1; then
     #         echo "Installing fd-find for Ubuntu/Debian..."
     #         install_pkg "fd-find"
-            
+
     #         # 建立軟連結到 /usr/local/bin (這通常在 $PATH 內且優於 /usr/bin)
     #         # 這樣你就可以直接打 'fd' 而不是 'fdfind'
     #         if [ ! -f /usr/local/bin/fd ]; then
@@ -699,7 +707,6 @@ echo "--- Installing Apps (Yazi) ---"
         fi
     fi
 
-
     if ! command -v eza >/dev/null 2>&1; then
         echo "Installing eza (modern ls)..."
         # 這是 Debian/Ubuntu 的官方推薦安裝方式（處理 GPG key 與 repo）
@@ -716,7 +723,7 @@ echo "--- Installing Apps (Yazi) ---"
 deploy_wsl_conf() {
     [ -f /etc/wsl.conf ] && echo "/etc/wsl.conf exits!" && return
     echo "--- Deploying /etc/wsl.conf ---"
-    
+
     local CURRENT_USER=$(whoami)
     local HOST_NAME="paswsl"
     # 如果以後要變動 boot command，可以在這裡定義
@@ -726,10 +733,10 @@ deploy_wsl_conf() {
     sed -e "s|{{BOOT_COMMAND}}|$BOOT_CMD|g" \
         -e "s|{{HOSTNAME}}|$HOST_NAME|g" \
         -e "s|{{DEFAULT_USER}}|$CURRENT_USER|g" \
-        "$DOT_ROOT/windows/wsl.conf.tmpl" > /tmp/wsl.conf
+        "$DOT_ROOT/windows/wsl.conf.tmpl" >/tmp/wsl.conf
 
     # 檢查是否與現有的不同，減少不必要的寫入
-    if ! diff /tmp/wsl.conf /etc/wsl.conf > /dev/null 2>&1; then
+    if ! diff /tmp/wsl.conf /etc/wsl.conf >/dev/null 2>&1; then
         echo "Updating /etc/wsl.conf (Root required)..."
         sudo mv /tmp/wsl.conf /etc/wsl.conf
         sudo chown root:root /etc/wsl.conf
@@ -749,13 +756,12 @@ deploy_bash_config() {
 
     # 檢查是否已經有這一行，避免重複寫入
     if ! grep -qF "/config/bash/bashrc_extra.sh" "$bashrc"; then
-        echo -e "\n# Added by dotfiles deploy script\n$loader_line" >> "$bashrc"
+        echo -e "\n# Added by dotfiles deploy script\n$loader_line" >>"$bashrc"
         echo "Linked $extra_path to $bashrc"
     else
         echo ".bashrc is already linked to extra config."
-    fi    
+    fi
 }
-
 
 link_config() {
     local name=$1
@@ -771,7 +777,7 @@ link_config() {
         return 1
     fi
 
-    safe_link "$source_path" "$target_path" 
+    safe_link "$source_path" "$target_path"
     return
     # 2. 處理現有的目標檔案/目錄
     if [ -L "$target_path" ]; then
@@ -795,7 +801,7 @@ link_config() {
 safe_link() {
     local src="$1"
     local dst="$2"
-    
+
     # 確保 source 存在，否則 link 會壞掉
     if [[ ! -e "$src" ]]; then
         echo "Error: Source $src does not exist."
@@ -810,7 +816,7 @@ safe_link() {
     fi
 
     echo "Linking $dst -> $src"
-    
+
     # 判斷目標路徑是否需要 sudo (如果目錄不可寫入)
     local target_dir=$(dirname "$dst")
     if [[ -w "$target_dir" ]]; then
@@ -820,16 +826,14 @@ safe_link() {
     fi
 }
 
-
 deploy_git() {
     echo "--- Deploy git ---"
-    
+
     # 1. 處理 Link (不浪費)
     safe_link "$DOT_ROOT/git/.gitconfig" "$USER_HOME/.gitconfig"
     safe_link "$DOT_ROOT/git/.gitconfig.shared" "$USER_HOME/.gitconfig.shared"
     safe_link "$DOT_ROOT/git/.gitignore.global" "$USER_HOME/.gitignore.global"
     safe_link "$DOT_ROOT/git/.gitattributes" "$USER_HOME/.gitattributes"
-
 
     # 2. 準備動態內容
     local credential=""
@@ -838,15 +842,16 @@ deploy_git() {
     helper = $SCOOP_ROOT/apps/git/current/mingw64/bin/git-credential-manager.exe"
     fi
 
-    if [[ "$IS_WSL" = true && -n "$SCOOP_ROOT" ]] ; then
+    if [[ "$IS_WSL" = true && -n "$SCOOP_ROOT" ]]; then
         # 建立新的內容字串
-        local new_content=$(cat <<EOF
+        local new_content=$(
+            cat <<EOF
 [safe]
     directory = $DOT_ROOT
 $credential
 EOF
-)
-        
+        )
+
         # 3. 檢查 .gitconfig.local 是否需要更新
         local local_config="$USER_HOME/.gitconfig.local"
         if [[ -f "$local_config" ]]; then
@@ -859,10 +864,9 @@ EOF
 
         # 內容不同或檔案不存在才寫入
         echo "Updating .gitconfig.local..."
-        echo "$new_content" > "$local_config"
-    fi    
+        echo "$new_content" >"$local_config"
+    fi
 }
-
 
 deploy_ssh() {
     echo "--- Deploy SSH config ---"
@@ -905,7 +909,6 @@ check_and_install_zfs() {
             return 0
         fi
     fi
-
 
     # 1. 檢查核心是否支援 ZFS
     # 方法 A: 檢查 /proc/filesystems 是否有 zfs 註冊
@@ -957,7 +960,7 @@ check_fuse_and_install() {
 
 deploy_zsh_config() {
     echo "--- Configuring Zsh ---"
-    
+
     # 1. 確保 zsh 已安裝 (雙重保險)
     if ! command -v zsh >/dev/null 2>&1; then
         install_pkg zsh
@@ -979,7 +982,7 @@ deploy_zsh_config() {
 # ----------------------------------------------------------------
 deploy_node_via_fnm() {
     echo "--- Checking Node.js Environment (via fnm) ---"
-    
+
     set +e
 
     # 1. 建立通用個人 bin 目錄 (確保 ~/.local/bin 存在)
@@ -1012,7 +1015,7 @@ deploy_node_via_fnm() {
     # 5. 將 fnm 的當前 node/npm 硬連結到 ~/.local/bin 作為安全防禦 (針對非 interactive shell)
     local fnm_node_path
     fnm_node_path=$(fnm current 2>/dev/null)
-    
+
     if [ -n "$fnm_node_path" ]; then
         echo "Node.js ($fnm_node_path) is now set as default via fnm."
         echo "   node path: $(which node)"
@@ -1030,15 +1033,19 @@ deploy_node_via_fnm
 check_fuse_and_install
 
 echo "Checking git submodules..."
-try_run "更新 Git 子模組" git submodule update --init --recursive
+# 檢查如果本身是 Git 專案才執行 submodule 更新，否則直接略過
+if [ -d ".git" ]; then
+    try_run "更新 Git 子模組" git submodule update --init --recursive
+else
+    echo "[*] 目前為純資料夾模式（無 .git 紀錄），跳過 Git 子模組更新。"
+fi
 
-NVIM_RELEASE_CHANNEL="stable"  # 可選 "stable" 或 "nightly"
+NVIM_RELEASE_CHANNEL="stable" # 可選 "stable" 或 "nightly"
 if [ "$NVIM_RELEASE_CHANNEL" = "nightly" ]; then
     deploy_neovim_nightly
 else
     deploy_neovim_stable
 fi
-
 
 # --- 5. 執行流程 ---
 echo "--- Linking Core Configs ---"
@@ -1046,15 +1053,14 @@ echo "--- Linking Core Configs ---"
 
 #ln -sf "$DOT_ROOT/core/.bashrc" "$USER_HOME/.bashrc"
 [ -f $USER_HOME/.bashrc ] && cp $USER_HOME/.bashrc $USER_HOME/.bashrc.org && rm $USER_HOME/.bashrc
-safe_link  "$DOT_ROOT/core/.bashrc" "$USER_HOME/.bashrc"
-[ ! -f $USER_HOME/.profile ] && safe_link  "$DOT_ROOT/core/.profile" "$USER_HOME/.profile"
+safe_link "$DOT_ROOT/core/.bashrc" "$USER_HOME/.bashrc"
+[ ! -f $USER_HOME/.profile ] && safe_link "$DOT_ROOT/core/.profile" "$USER_HOME/.profile"
 
 deploy_zsh_config
 deploy_ssh
 deploy_git
 
 safe_link "$DOT_ROOT/tmux/.tmux.conf" "$USER_HOME/.tmux.conf"
-
 
 CONFIG_HOME="$USER_HOME/.config"
 # 確保 .config 目錄存在
@@ -1083,37 +1089,77 @@ done
 # ln -sf "$SOURCE_DIR" "$USER_HOME/.config/"
 # echo "Yazi config linked to $TARGET_DIR"
 
-
 #deploy_bash_config
 deploy_starship
 
 # D. WSL / Windows 特有部署
-
 if [ "$IS_WSL" = true ]; then
-    # 設定 Windows 路徑變數    
-    SCOOP_ETC="$SCOOP_ROOT/etc"
-    DOT_ROOT="$SCOOP_ETC/dotfiles"
-    CMD="$WIN_DIR_BASE/System32/cmd.exe"
-    RUNTIME_DIR="$SCOOP_ETC/wsl_runtime"
-    WIN_USERPROFILE_RAW=$($CMD /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r')
-    WIN_HOME_PATH=$(wslpath "$WIN_USERPROFILE_RAW")
+    echo "=================================================="
+    echo "[*] 正在檢查 WSL 環境的 ZFS 支援狀態..."
 
-    echo "Using Windows PS: $WIN_PS"
-    deploy_kernel
-    render_wslconfig
-    deploy_wsl_conf
-    
-    # 呼叫原生 Windows 部署 (Scoop, Fonts, Win-links)
-    "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$DOT_ROOT/scripts/deploy.ps1")"    
-    # $CMD /c "powershell -ExecutionPolicy Bypass -File D:\Scoop\etc\dotfiles\scripts\deploy.ps1"
+    # 檢查是否具備 zpool 指令且有現成的 zpool
+    HAS_ZFS=false
+    if command -v zpool &>/dev/null; then
+        if zpool list -H &>/dev/null; then
+            HAS_ZFS=true
+        fi
+    fi
+
+    echo "--------------------------------------------------"
+    echo "[!] 提示 1：確保 Windows 端已完成 dotfiles 設定（若尚未設定，可在 Windows PowerShell 執行）："
+    echo '    iex (irm "https://raw.githubusercontent.com/pascal-lcc/dotfiles/main/scripts/setup-dotfiles.ps1")'
+    echo ""
+
+    if [ "$HAS_ZFS" = true ]; then
+        echo "[+] 偵測到此 WSL 已經具備 ZFS 運作環境，無需更新核心與工具。"
+    else
+        echo "[!] 提示 2：此 WSL 環境目前尚未偵測到 ZFS 運作環境。"
+        echo "[*] 若需要在此 WSL 中啟用 PVE/ZFS 儲存功能，請在 Windows PowerShell (以系統管理員身分) 執行更新核心指令："
+        echo '    $scriptPath = "$env:TEMP\Update-PveZfsWslKernel.ps1"; Invoke-RestMethod -Uri "https://raw.githubusercontent.com/pascal-lcc/dotfiles/main/scripts/build-wsl-zfs-pve/Update-PveZfsWslKernel.ps1" -OutFile $scriptPath; & $scriptPath; Remove-Item $scriptPath -Force'
+    fi
+    echo "--------------------------------------------------"
+    echo "=================================================="
 fi
 
-
-echo "Done! Environment: $( [ "$IS_WSL" = true ] && echo 'WSL' || echo 'Pure Linux' )"
+# if [ "$IS_WSL" = true ] && [ -n "$SCOOP_ROOT" ]; then
+#     # 設定 Windows 路徑變數
+#     SCOOP_ETC="$SCOOP_ROOT/etc"
+#     DOT_ROOT="$SCOOP_ETC/dotfiles"
+#     CMD="$WIN_DIR_BASE/System32/cmd.exe"
+#     RUNTIME_DIR="$SCOOP_ETC/wsl_runtime"
+#     WIN_USERPROFILE_RAW=$($CMD /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r')
+#     WIN_HOME_PATH=$(wslpath "$WIN_USERPROFILE_RAW")
+#
+#     echo "Using Windows PS: $WIN_PS"
+#     deploy_kernel
+#     render_wslconfig
+#     deploy_wsl_conf
+#
+#     # 檢查 deploy.ps1 是否存在
+#     DEPLOY_PS1="$DOT_ROOT/scripts/deploy.ps1"
+#     if [ -f "$DEPLOY_PS1" ]; then
+#         echo -n "[?] 偵測到 deploy.ps1，是否要執行原生 Windows 部署 (Scoop, Fonts, Win-links)? [y/N]: "
+#         read -r REPLY
+#         case "$REPLY" in
+#         [yY][eE][sS] | [yY])
+#             echo "[>] 正在執行 Windows 部署腳本..."
+#             "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$DEPLOY_PS1")"
+#             ;;
+#         *)
+#             echo "[*] 已跳過 Windows 部署腳本。"
+#             ;;
+#         esac
+#     else
+#         echo "[*] 找不到 $DEPLOY_PS1，自動跳過。"
+#     fi
+#     # "$WIN_PS" -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$DOT_ROOT/scripts/deploy.ps1")"
+#     # $CMD /c "powershell -ExecutionPolicy Bypass -File D:\Scoop\etc\dotfiles\scripts\deploy.ps1"
+# fi
+#
+echo "Done! Environment: $([ "$IS_WSL" = true ] && echo 'WSL' || echo 'Pure Linux')"
 
 if [ "$NEED_RESTART" = true ]; then
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "KERNEL UPDATED: Please run 'wsl.exe --shutdown' in Win"
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 fi
-
