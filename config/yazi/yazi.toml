@@ -1,5 +1,6 @@
 [manager]
 shell = ["cmd.exe", "/c"]
+title_format = ""
 
 [mgr]
 # ratio = [1, 2, 5]
@@ -58,7 +59,7 @@ play = [
 ]
 
 [preview]
-image_allocator = "sixel" 
+# image_allocator = "sixel" 
 # 限制預覽尺寸，避免 7-bit 傳輸太慢導致卡頓
 max_width  = 800
 max_height = 800
@@ -76,7 +77,7 @@ cache_dir = "/tmp/yazi"
 [open]
 rules = [
     # Folder
-    { name = "*/", use = ["edit", "open", "reveal"] },
+    { url = "*/", use = ["edit", "open", "reveal"] },
     # Text
     { mime = "text/*", use = ["edit", "reveal"] },
     # Image
@@ -91,7 +92,7 @@ rules = [
     # Empty file
     { mime = "inode/empty", use = ["edit", "reveal"] },
     # Fallback
-    { name = "*", use = ["open", "reveal"] },
+    { url = "*", use = ["open", "reveal"] },
 ]
 
 [tasks]
@@ -109,7 +110,7 @@ suppress_preload = false
 #     { id = "mime", name = "*", run = "mime", if = "!mime", prio = "high" },
 # ]
 spotters = [
-    { name = "*/", run = "folder" },
+    { url = "*/", run = "folder" },
     # Code
     { mime = "text/*", run = "code" },
     { mime = "*/{xml,javascript,wine-extension-ini}", run = "code" },
@@ -119,7 +120,7 @@ spotters = [
     # Video
     { mime = "video/*", run = "video" },
     # Fallback
-    { name = "*", run = "file" },
+    { url = "*", run = "file" },
 ]
 preloaders = [
     # Image
@@ -134,7 +135,7 @@ preloaders = [
     { mime = "application/ms-opentype", run = "font" },
 ]
 previewers = [
-    { name = "*/", run = "folder", sync = true },
+    { url = "*/", run = "folder", sync = true },
     # Code
     { mime = "text/*", run = "code" },
     { mime = "*/{xml,javascript,wine-extension-ini}", run = "code" },
@@ -150,36 +151,36 @@ previewers = [
     # Archive
     { mime = "application/{zip,rar,7z*,tar,gzip,xz,zstd,bzip*,lzma,compress,archive,cpio,arj,xar,ms-cab*}", run = "archive" },
     { mime = "application/{debian*-package,redhat-package-manager,rpm,android.package-archive}", run = "archive" },
-    { name = "*.{AppImage,appimage}", run = "archive" },
+    { url = "*.{AppImage,appimage}", run = "archive" },
     # Virtual Disk / Disk Image
     { mime = "application/{iso9660-image,qemu-disk,ms-wim,apple-diskimage}", run = "archive" },
     { mime = "application/virtualbox-{vhd,vhdx}", run = "archive" },
-    { name = "*.{img,fat,ext,ext2,ext3,ext4,squashfs,ntfs,hfs,hfsx}", run = "archive" },
+    { url = "*.{img,fat,ext,ext2,ext3,ext4,squashfs,ntfs,hfs,hfsx}", run = "archive" },
     # Font
     { mime = "font/*", run = "font" },
     { mime = "application/ms-opentype", run = "font" },
     # Empty file
     { mime = "inode/empty", run = "empty" },
     # Fallback
-    { name = "*", run = "file" },
+    { url = "*", run = "file" },
 ]
 
 prepend_previewers = [
-  { name = "*.csv", run = "duckdb" },
-  { name = "*.tsv", run = "duckdb" },
-  { name = "*.parquet", run = "duckdb" },
-  { name = "*.xlsx", run = "duckdb" },
-  { name = "*.db", run = "duckdb" },
-  { name = "*.duckdb", run = "duckdb" }
+  # { url = "*.csv", run = "duckdb" },
+  # { url = "*.tsv", run = "duckdb" },
+  # { url = "*.parquet", run = "duckdb" },
+  # { url = "*.xlsx", run = "duckdb" },
+  # { url = "*.db", run = "duckdb" },
+  # { url = "*.duckdb", run = "duckdb" }
 ]
 
 prepend_preloaders = [
-  { name = "*.csv", run = "duckdb", multi = false },
-  { name = "*.tsv", run = "duckdb", multi = false },
-  { name = "*.json", run = "duckdb", multi = false },
-  { name = "*.parquet", run = "duckdb", multi = false },
-  { name = "*.txt", run = "duckdb", multi = false },
-  { name = "*.xlsx", run = "duckdb", multi = false }
+  # { url = "*.csv", run = "duckdb", multi = false },
+  # { url = "*.tsv", run = "duckdb", multi = false },
+  # { url = "*.json", run = "duckdb", multi = false },
+  # { url = "*.parquet", run = "duckdb", multi = false },
+  # { url = "*.txt", run = "duckdb", multi = false },
+  # { url = "*.xlsx", run = "duckdb", multi = false }
 ]
 
 [input]

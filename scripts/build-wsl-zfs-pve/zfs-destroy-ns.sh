@@ -1,0 +1,1305 @@
+#!/usr/bin/env bash
+#
+# zfs-destroy-ns.sh
+#
+# Safety/evidence wrapper around native `zfs destroy`.
+#
+# Supported options: -d -n -p -R -r -v
+# -f is rejected. Multiple targets, bookmarks and snapshot ranges/lists
+# are rejected so every planned object can be identified by GUID.
+#
+# The preview always uses native `zfs destroy -n -v` (without -p) so its
+# "would destroy" list can be parsed. The actual command retains the exact
+# original arguments. Namespace-local mounts are removed with nsenter +
+# ordinary umount only after explicit DESTROY confirmation.
+#
+# Before a real destroy, discover ZFS mounts in every visible process mount
+# namespace. After explicit DESTROY confirmation, use nsenter + normal umount
+# in each affected namespace, verify cleanup, then run native zfs destroy.
+# No lazy/force unmount, process kill, service restart, reboot, or pool-clear.
+#
+
+set -uo pipefail
+export LC_ALL=C
+
+PROGRAM="${0##*/}"
+LOG_BASE="${SAVE_ZFS_DESTROY_DIR:-/var/log/zfs-destroy}"
+LOG_DIR=""
+
+ARGS=()
+TARGETS=()
+PREVIEW_ARGS=()
+MANIFEST_DATASETS=()
+MANIFEST_POOLS=()
+
+DRY_RUN_ONLY=0
+TARGET_SEEN=0
+TARGET=""
+TARGET_DATASET=""
+TARGET_POOL=""
+TARGET_GUID=""
+DESTROY_RC=0
+POST_DESTROY_OK=1
+
+# ------------------------------------------------------------
+# Common helpers
+# ------------------------------------------------------------
+
+die() {
+    echo >&2
+    echo "ERROR: $*" >&2
+    [[ -n "$LOG_DIR" ]] && echo "Evidence: $LOG_DIR" >&2
+    exit 1
+}
+
+section() {
+    echo
+    echo "===== $* ====="
+}
+
+print_command() {
+    printf '%q' "$1"
+    shift
+    for arg in "$@"; do
+        printf ' %q' "$arg"
+    done
+    echo
+}
+
+on_signal() {
+    echo
+    echo "收到中斷訊號，停止 wrapper。"
+    [[ -n "$LOG_DIR" ]] && echo "Evidence: $LOG_DIR"
+    exit 130
+}
+
+trap 'on_signal' INT TERM HUP
+
+capture() {
+    local file="$1"
+    shift
+    local output="$LOG_DIR/$file"
+    local rc
+
+    if "$@" >"$output" 2>&1; then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    printf '%-40s %s\n' "$file" \
+        "$([[ $rc -eq 0 ]] && echo PASS || echo FAIL)"
+
+    if ((rc != 0)); then
+        echo "命令失敗，輸出末尾："
+        tail -n 8 "$output" 2>/dev/null || true
+        return "$rc"
+    fi
+    return 0
+}
+
+capture_optional() {
+    local file="$1"
+    shift
+    local output="$LOG_DIR/$file"
+    local rc
+
+    if "$@" >"$output" 2>&1; then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    printf '%-40s %s\n' "$file" \
+        "$([[ $rc -eq 0 ]] && echo PASS || echo WARN)"
+    return 0
+}
+
+capture_history_tail() {
+    local pool="$1"
+    local file="$2"
+    local raw="$LOG_DIR/.${file}.raw"
+    local output="$LOG_DIR/$file"
+
+    if zpool history "$pool" >"$raw" 2>&1; then
+        tail -n 40 "$raw" >"$output" || return 1
+        rm -f -- "$raw"
+        printf '%-40s %s\n' "$file" "PASS (last 40 lines)"
+    else
+        tail -n 40 "$raw" >"$output" 2>/dev/null || true
+        rm -f -- "$raw"
+        printf '%-40s %s\n' "$file" "WARN"
+    fi
+    return 0
+}
+
+get_guid() {
+    zfs get -H -o value guid "$1"
+}
+
+get_type() {
+    zfs get -H -o value type "$1"
+}
+
+get_property() {
+    zfs get -H -o value "$2" "$1"
+}
+
+# Extract the exact object names emitted by `zfs destroy -n -v`.
+extract_destroy_names() {
+    local preview_file="$1"
+    local names_file="$2"
+
+    awk '
+        /^would destroy / {
+            name = substr($0, 15)
+            print name
+            found++
+        }
+        END {
+            if (found == 0) exit 1
+        }
+    ' "$preview_file" >"$names_file"
+}
+
+# Convert a verbose dry-run into an ordered name/GUID/type manifest.
+# Fail closed if any line cannot be resolved to a current ZFS object.
+build_destroy_manifest() {
+    local names_file="$1"
+    local manifest_file="$2"
+    local name guid object_type sorted_file
+
+    [[ -s "$names_file" ]] || return 1
+
+    sorted_file="${names_file}.sorted"
+    sort -u "$names_file" >"$sorted_file" || return 1
+    local original_count unique_count
+    original_count="$(wc -l <"$names_file" | tr -d ' ')"
+    unique_count="$(wc -l <"$sorted_file" | tr -d ' ')"
+    rm -f -- "$sorted_file"
+    if [[ "$original_count" != "$unique_count" ]]; then
+        echo "ERROR: dry-run manifest contains duplicate object names." >&2
+        return 1
+    fi
+
+    : >"$manifest_file" || return 1
+
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || return 1
+        [[ "$name" != *'#'* ]] || {
+            echo "ERROR: bookmark appeared in destroy manifest: $name" >&2
+            return 1
+        }
+
+        guid="$(get_guid "$name" 2>/dev/null)" || {
+            echo "ERROR: cannot read GUID for planned object: $name" >&2
+            return 1
+        }
+        [[ "$guid" =~ ^[0-9]+$ ]] || {
+            echo "ERROR: invalid GUID for planned object: $name" >&2
+            return 1
+        }
+
+        object_type="$(get_type "$name" 2>/dev/null)" || {
+            echo "ERROR: cannot read type for planned object: $name" >&2
+            return 1
+        }
+
+        case "$object_type" in
+            filesystem|volume|snapshot) ;;
+            *)
+                echo "ERROR: unsupported planned object type '$object_type': $name" >&2
+                return 1
+                ;;
+        esac
+
+        printf '%s\t%s\t%s\n' \
+            "$name" "$guid" "$object_type" >>"$manifest_file" || return 1
+    done <"$names_file"
+
+    [[ -s "$manifest_file" ]]
+}
+
+# Verify every planned object still has the same GUID and type.
+verify_manifest_identity() {
+    local manifest_file="$1"
+    local name expected_guid expected_type current_guid current_type
+
+    while IFS=$'\t' read -r name expected_guid expected_type; do
+        [[ -n "$name" ]] || return 1
+
+        current_guid="$(get_guid "$name" 2>/dev/null)" || {
+            echo "FAIL: object missing or GUID unreadable: $name"
+            return 1
+        }
+        current_type="$(get_type "$name" 2>/dev/null)" || {
+            echo "FAIL: object type unreadable: $name"
+            return 1
+        }
+
+        if [[ "$current_guid" != "$expected_guid" ||
+              "$current_type" != "$expected_type" ]]; then
+            echo "FAIL: identity changed: $name"
+            echo "  Expected: GUID=$expected_guid TYPE=$expected_type"
+            echo "  Current:  GUID=$current_guid TYPE=$current_type"
+            return 1
+        fi
+    done <"$manifest_file"
+
+    return 0
+}
+
+# Populate unique pools and the datasets that are actually being destroyed.
+# Snapshot-only entries do not imply that their parent filesystem is destroyed.
+load_manifest_scope() {
+    local manifest_file="$1"
+    local name guid object_type base pool
+    local -A seen_datasets=()
+    local -A seen_pools=()
+
+    MANIFEST_DATASETS=()
+    MANIFEST_POOLS=()
+
+    while IFS=$'\t' read -r name guid object_type; do
+        base="${name%%@*}"
+        pool="${base%%/*}"
+
+        if [[ -z "${seen_pools[$pool]+x}" ]]; then
+            seen_pools["$pool"]=1
+            MANIFEST_POOLS+=("$pool")
+        fi
+
+        if [[ "$object_type" == "filesystem" || "$object_type" == "volume" ]]; then
+            if [[ -z "${seen_datasets[$name]+x}" ]]; then
+                seen_datasets["$name"]=1
+                MANIFEST_DATASETS+=("$name")
+            fi
+        fi
+    done <"$manifest_file"
+}
+
+# Shares are not silently changed by this wrapper. Active share properties
+# remain a hard stop; mountpoints themselves are explicitly unmounted below
+# in each process mount namespace using nsenter + ordinary umount.
+check_shares_disabled() {
+    local output_file="$1"
+    local dataset object_type sharenfs sharesmb mounted blocked=0
+
+    : >"$output_file" || return 1
+
+    for dataset in "${MANIFEST_DATASETS[@]}"; do
+        object_type="$(get_type "$dataset" 2>/dev/null)" || return 1
+        printf '%s\ttype\t%s\n' "$dataset" "$object_type" >>"$output_file"
+        [[ "$object_type" == "filesystem" ]] || continue
+
+        mounted="$(get_property "$dataset" mounted 2>/dev/null)" || return 1
+        sharenfs="$(get_property "$dataset" sharenfs 2>/dev/null)" || return 1
+        sharesmb="$(get_property "$dataset" sharesmb 2>/dev/null)" || return 1
+
+        printf '%s\tmounted\t%s\n' "$dataset" "$mounted" >>"$output_file"
+        printf '%s\tsharenfs\t%s\n' "$dataset" "$sharenfs" >>"$output_file"
+        printf '%s\tsharesmb\t%s\n' "$dataset" "$sharesmb" >>"$output_file"
+
+        if [[ "$sharenfs" != "off" || "$sharesmb" != "off" ]]; then
+            echo "BLOCK: $dataset sharenfs=$sharenfs sharesmb=$sharesmb"
+            blocked=1
+        fi
+    done
+
+    ((blocked == 0))
+}
+
+# Decode the escaped mountpoint field from /proc/PID/mountinfo.
+# Bash printf %b understands the kernel's octal escapes (\040, \011, etc.).
+decode_mountinfo_path() {
+    printf -v DECODED_MOUNTPOINT '%b' "$1"
+}
+
+# Read Linux task state from /proc/PID/stat.
+# The comm field is parenthesized and may itself contain spaces or ')', so
+# strip through the final ') ' before reading field 3 (task state).
+read_proc_state() {
+    local proc_dir="$1"
+    local stat_line rest
+
+    [[ -r "$proc_dir/stat" ]] || return 1
+    IFS= read -r stat_line < "$proc_dir/stat" || return 1
+    rest="${stat_line##*) }"
+    [[ "$rest" != "$stat_line" && -n "$rest" ]] || return 1
+    printf '%s\n' "${rest%% *}"
+}
+
+# Scan every visible process mount table for ZFS sources in the destroy set.
+# Output plan rows: namespace, representative PID, mount ID, escaped mountpoint, source.
+# Return 0=no matches, 1=matches found, 2=scan incomplete.
+scan_mount_namespaces() {
+    local output_file="$1"
+    local plan_file="$2"
+    local dataset_file="$LOG_DIR/.mount-scan-datasets.txt"
+    local raw_plan="$LOG_DIR/.mount-scan-plan-raw.tsv"
+    local proc pid ns state tmp_matches mount_id escaped_mp fstype source key
+    local scanned=0 vanished=0 dead_skipped=0 unreadable=0 matched_pids=0
+    local -A seen_mount_entries=() seen_namespaces=()
+
+    : >"$output_file" || return 2
+    : >"$plan_file" || return 2
+    : >"$dataset_file" || return 2
+    : >"$raw_plan" || return 2
+    printf '%s\n' "${MANIFEST_DATASETS[@]}" >"$dataset_file" || return 2
+
+    {
+        echo "Time: $(date --iso-8601=seconds)"
+        echo "Method: scan /proc/PID/mountinfo across visible mount namespaces"
+        echo "Scope: ZFS filesystem/volume objects in native destroy manifest"
+        echo "Matching: exact planned ZFS source or descendant of planned dataset"
+        echo
+    } >>"$output_file"
+
+    for proc in /proc/[0-9]*; do
+        [[ -d "$proc" ]] || continue
+        pid="${proc##*/}"
+
+        # Zombie/dead tasks have already released their mm/files/nsproxy and
+        # cannot retain a mount namespace. Their /proc/PID/mountinfo commonly
+        # fails with EINVAL; treating that as an unreadable live namespace is
+        # a false positive (for example, PID 11 [sh] <defunct> in this WSL host).
+        state="$(read_proc_state "$proc" 2>/dev/null || true)"
+        if [[ "$state" == "Z" || "$state" == "X" ]]; then
+            ((dead_skipped++))
+            printf 'SKIP dead/zombie PID=%s STATE=%s (no live mount namespace)\n' \
+                "$pid" "$state" >>"$output_file"
+            continue
+        fi
+
+        ns="$(readlink "$proc/ns/mnt" 2>/dev/null || true)"
+        if [[ -z "$ns" ]]; then
+            if [[ ! -d "$proc" ]]; then
+                ((vanished++))
+            else
+                # Recheck state to tolerate exit-to-zombie between the first
+                # stat read and the namespace symlink lookup.
+                state="$(read_proc_state "$proc" 2>/dev/null || true)"
+                if [[ "$state" == "Z" || "$state" == "X" ]]; then
+                    ((dead_skipped++))
+                    printf 'SKIP dead/zombie PID=%s STATE=%s (no live mount namespace)\n' \
+                        "$pid" "$state" >>"$output_file"
+                else
+                    ((unreadable++))
+                    printf 'UNREADABLE namespace PID=%s STATE=%s (process still present)\n' \
+                        "$pid" "${state:-unknown}" >>"$output_file"
+                fi
+            fi
+            continue
+        fi
+
+        tmp_matches="$LOG_DIR/.mount-match-${pid}.tmp"
+        if awk -v dataset_file="$dataset_file" '
+            BEGIN {
+                while ((getline d < dataset_file) > 0) {
+                    if (d != "") wanted[d] = 1
+                }
+                close(dataset_file)
+            }
+            {
+                for (i = 7; i <= NF; i++) {
+                    if ($i == "-") {
+                        fstype = $(i + 1)
+                        source = $(i + 2)
+                        if (fstype == "zfs") {
+                            for (d in wanted) {
+                                if (source == d || index(source, d "/") == 1) {
+                                    printf "%s\t%s\t%s\t%s\n", $1, $5, fstype, source
+                                    break
+                                }
+                            }
+                        }
+                        break
+                    }
+                }
+            }
+        ' "$proc/mountinfo" >"$tmp_matches" 2>/dev/null; then
+            ((scanned++))
+        else
+            rm -f -- "$tmp_matches"
+            if [[ ! -d "$proc" ]]; then
+                ((vanished++))
+            else
+                # The task may have become a zombie after namespace lookup but
+                # before mountinfo was opened. Recheck before classifying it as
+                # a genuinely unreadable live process.
+                state="$(read_proc_state "$proc" 2>/dev/null || true)"
+                if [[ "$state" == "Z" || "$state" == "X" ]]; then
+                    ((dead_skipped++))
+                    printf 'SKIP dead/zombie PID=%s STATE=%s (mountinfo unavailable after exit)\n' \
+                        "$pid" "$state" >>"$output_file"
+                else
+                    ((unreadable++))
+                    printf 'UNREADABLE mountinfo PID=%s NS=%s STATE=%s (process still present)\n' \
+                        "$pid" "$ns" "${state:-unknown}" >>"$output_file"
+                fi
+            fi
+            continue
+        fi
+
+        if [[ -s "$tmp_matches" ]]; then
+            ((matched_pids++))
+            seen_namespaces["$ns"]=1
+            {
+                echo
+                echo "PID=$pid NS=$ns"
+                ps -p "$pid" -o pid,ppid,user,comm,args 2>/dev/null || true
+            } >>"$output_file"
+
+            while IFS=$'\t' read -r mount_id escaped_mp fstype source; do
+                [[ -n "$source" ]] || continue
+                key="${ns}"$'\034'"${mount_id}"$'\034'"${escaped_mp}"$'\034'"${source}"
+                if [[ -z "${seen_mount_entries[$key]+x}" ]]; then
+                    seen_mount_entries["$key"]=1
+                    printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$ns" "$pid" "$mount_id" "$escaped_mp" "$source" >>"$raw_plan"
+                fi
+                printf 'MOUNT_ID=%s TARGET=%s SOURCE=%s FSTYPE=%s\n' \
+                    "$mount_id" "$escaped_mp" "$source" "$fstype" >>"$output_file"
+            done <"$tmp_matches"
+        fi
+        rm -f -- "$tmp_matches"
+    done
+
+    # Unmount children before parent mountpoints, within each namespace.
+    if [[ -s "$raw_plan" ]]; then
+        awk -F '\t' '{ p=$4; depth=gsub(/\//, "/", p); print depth "\t" $0 }' "$raw_plan" |
+            sort -t $'\t' -k1,1nr |
+            cut -f2- >"$plan_file" || return 2
+    fi
+
+    local planned_mounts
+    planned_mounts="$(wc -l <"$plan_file" | tr -d ' ')"
+
+    {
+        echo
+        echo "Readable mountinfo scanned: $scanned"
+        echo "Processes vanished during scan: $vanished"
+        echo "Zombie/dead processes skipped: $dead_skipped"
+        echo "Unreadable/incomplete live process entries: $unreadable"
+        echo "PIDs with matching ZFS mounts: $matched_pids"
+        echo "Unique namespaces with matching ZFS mounts: ${#seen_namespaces[@]}"
+        echo "Unique ZFS mount entries to unmount: $planned_mounts"
+        echo
+        echo "Namespace unmount plan (one row per mount entry):"
+        while IFS=$'\t' read -r plan_ns plan_pid plan_id plan_mp plan_source; do
+            [[ -n "$plan_ns" ]] || continue
+            printf 'NS=%s PID=%s MOUNT_ID=%s TARGET=%s SOURCE=%s\n' \
+                "$plan_ns" "$plan_pid" "$plan_id" "$plan_mp" "$plan_source"
+        done <"$plan_file"
+        echo
+        echo "NOTE: /proc scanning sees namespaces attached to visible processes."
+        echo "A namespace kept alive only by an nsfs handle may not have a PID here."
+    } >>"$output_file"
+
+    echo "mount-namespaces.txt saved"
+    echo "Matching PIDs: $matched_pids"
+    echo "Matching namespaces: ${#seen_namespaces[@]}"
+    echo "Mount entries requiring umount: $planned_mounts"
+    echo "Unreadable/incomplete entries: $unreadable"
+
+    rm -f -- "$dataset_file" "$raw_plan"
+
+    if ((unreadable > 0 || scanned == 0)); then
+        echo "BLOCK: mount namespace scan was incomplete."
+        return 2
+    fi
+    if ((planned_mounts > 0)); then
+        return 1
+    fi
+    return 0
+}
+
+print_namespace_unmount_plan() {
+    local plan_file="$1"
+    local ns pid mount_id escaped_mp source comm
+    local count=0
+
+    while IFS=$'\t' read -r ns pid mount_id escaped_mp source; do
+        [[ -n "$ns" ]] || continue
+        decode_mountinfo_path "$escaped_mp"
+        comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+        comm="${comm#"${comm%%[![:space:]]*}"}"
+        count=$((count + 1))
+        printf '  %2d. NS=%s PID=%s PROCESS=%q SOURCE=%s TARGET=%q\n' \
+            "$count" "$ns" "$pid" "$comm" "$source" "$DECODED_MOUNTPOINT"
+    done <"$plan_file"
+    ((count > 0)) || echo "  (no namespace mounts found)"
+}
+
+find_pid_for_namespace() {
+    local wanted_ns="$1"
+    local preferred_pid="$2"
+    local proc pid current_ns
+
+    if [[ -r "/proc/$preferred_pid/ns/mnt" ]]; then
+        current_ns="$(readlink "/proc/$preferred_pid/ns/mnt" 2>/dev/null || true)"
+        if [[ "$current_ns" == "$wanted_ns" ]]; then
+            printf '%s\n' "$preferred_pid"
+            return 0
+        fi
+    fi
+
+    for proc in /proc/[0-9]*; do
+        [[ -r "$proc/ns/mnt" ]] || continue
+        current_ns="$(readlink "$proc/ns/mnt" 2>/dev/null || true)"
+        if [[ "$current_ns" == "$wanted_ns" ]]; then
+            pid="${proc##*/}"
+            printf '%s\n' "$pid"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Return 0=matching mount still present, 1=mount absent, 2=namespace/proc unreadable.
+namespace_mount_present() {
+    local pid="$1"
+    local wanted_ns="$2"
+    local escaped_mp="$3"
+    local source="$4"
+    local current_ns
+
+    [[ -r "/proc/$pid/ns/mnt" && -r "/proc/$pid/mountinfo" ]] || return 2
+    current_ns="$(readlink "/proc/$pid/ns/mnt" 2>/dev/null || true)"
+    [[ "$current_ns" == "$wanted_ns" ]] || return 2
+
+    awk -v mp="$escaped_mp" -v src="$source" '
+        $5 == mp {
+            for (i = 7; i <= NF; i++) {
+                if ($i == "-") {
+                    if ($(i + 1) == "zfs" && $(i + 2) == src) found = 1
+                    break
+                }
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "/proc/$pid/mountinfo" 2>/dev/null
+}
+
+# Enter each affected mount namespace and use an ordinary umount. No -l/-f.
+# Stops on first failure; already-completed unmounts are logged and not rolled back.
+unmount_namespace_plan() {
+    local plan_file="$1"
+    local log_file="$2"
+    local ns preferred_pid mount_id escaped_mp source pid mountpoint
+    local index=0 rc present_rc
+
+    : >"$log_file" || return 1
+
+    while IFS=$'\t' read -r ns preferred_pid mount_id escaped_mp source; do
+        [[ -n "$ns" ]] || continue
+        index=$((index + 1))
+
+        pid="$(find_pid_for_namespace "$ns" "$preferred_pid")" || {
+            echo "FAIL: no live PID remains in namespace $ns" | tee -a "$log_file"
+            return 1
+        }
+
+        if namespace_mount_present "$pid" "$ns" "$escaped_mp" "$source"; then
+            :
+        else
+            present_rc=$?
+            if ((present_rc == 1)); then
+                echo "PASS: mount already disappeared (possibly propagated): NS=$ns SOURCE=$source" | tee -a "$log_file"
+                continue
+            fi
+            echo "FAIL: cannot revalidate mount in namespace $ns" | tee -a "$log_file"
+            return 1
+        fi
+
+        decode_mountinfo_path "$escaped_mp"
+        mountpoint="$DECODED_MOUNTPOINT"
+        local action_file="$LOG_DIR/ns-unmount-${index}.txt"
+
+        echo
+        echo "[$index] Unmount in namespace $ns (representative PID $pid)"
+        print_command "$NSENTER_BIN" --target "$pid" --mount --root -- "$UMOUNT_BIN" -- "$mountpoint"
+
+        if "$NSENTER_BIN" --target "$pid" --mount --root -- \
+            "$UMOUNT_BIN" -- "$mountpoint" >"$action_file" 2>&1; then
+            rc=0
+        else
+            rc=$?
+        fi
+
+        {
+            echo "NS=$ns PID=$pid MOUNT_ID=$mount_id SOURCE=$source TARGET=$mountpoint"
+            echo "Exit status: $rc"
+            cat "$action_file"
+        } >>"$log_file"
+
+        if ((rc != 0)); then
+            echo "FAIL: normal umount failed; no lazy/force fallback will be attempted."
+            tail -n 8 "$action_file" 2>/dev/null || true
+            return 1
+        fi
+
+        if namespace_mount_present "$pid" "$ns" "$escaped_mp" "$source"; then
+            echo "FAIL: mount still exists after umount: NS=$ns TARGET=$mountpoint SOURCE=$source"
+            return 1
+        else
+            present_rc=$?
+            if ((present_rc != 1)); then
+                echo "FAIL: unable to verify unmount in namespace $ns"
+                return 1
+            fi
+        fi
+
+        echo "PASS: unmounted $source at $mountpoint in $ns"
+    done <"$plan_file"
+
+    return 0
+}
+
+# Stable signature ignores the representative PID but detects namespace,
+# mount ID, mountpoint or ZFS source changes while awaiting confirmation.
+normalize_unmount_plan() {
+    local input_file="$1"
+    local output_file="$2"
+    awk -F '\t' 'NF >= 5 { print $1 "\t" $3 "\t" $4 "\t" $5 }' "$input_file" |
+        sort >"$output_file"
+}
+
+# After namespace cleanup, confirm every target filesystem is unmounted in
+# the caller's view and no network share property remains enabled.
+check_post_unmount_state() {
+    local output_file="$1"
+    local dataset object_type mounted sharenfs sharesmb blocked=0
+
+    : >"$output_file" || return 1
+    for dataset in "${MANIFEST_DATASETS[@]}"; do
+        object_type="$(get_type "$dataset" 2>/dev/null)" || return 1
+        printf '%s\ttype\t%s\n' "$dataset" "$object_type" >>"$output_file"
+        [[ "$object_type" == "filesystem" ]] || continue
+
+        mounted="$(get_property "$dataset" mounted 2>/dev/null)" || return 1
+        sharenfs="$(get_property "$dataset" sharenfs 2>/dev/null)" || return 1
+        sharesmb="$(get_property "$dataset" sharesmb 2>/dev/null)" || return 1
+
+        printf '%s\tmounted\t%s\n' "$dataset" "$mounted" >>"$output_file"
+        printf '%s\tsharenfs\t%s\n' "$dataset" "$sharenfs" >>"$output_file"
+        printf '%s\tsharesmb\t%s\n' "$dataset" "$sharesmb" >>"$output_file"
+
+        if [[ "$mounted" != "no" || "$sharenfs" != "off" || "$sharesmb" != "off" ]]; then
+            echo "BLOCK: $dataset mounted=$mounted sharenfs=$sharenfs sharesmb=$sharesmb"
+            blocked=1
+        fi
+    done
+    ((blocked == 0))
+}
+
+# ------------------------------------------------------------
+# 1. Environment
+# ------------------------------------------------------------
+
+[[ $EUID -eq 0 ]] || die "請使用 sudo 執行"
+
+for cmd in zfs zpool nsenter umount sha256sum tee mktemp realpath awk sort grep tail head cmp diff cp rm ps readlink cat cut wc tr; do
+    command -v "$cmd" >/dev/null 2>&1 || die "找不到必要命令：$cmd"
+done
+
+NSENTER_BIN="$(command -v nsenter)"
+UMOUNT_BIN="$(command -v umount)"
+
+(($# > 0)) || die "Usage: $PROGRAM [zfs destroy options] dataset|snapshot"
+
+# ------------------------------------------------------------
+# 2. Parse arguments; preserve original arguments exactly
+# ------------------------------------------------------------
+
+ARGS=("$@")
+
+for arg in "${ARGS[@]}"; do
+    if [[ "$arg" == "--" ]]; then
+        die "不接受 --；請直接提供 ZFS 目標"
+    fi
+
+    if [[ "$arg" == -* ]]; then
+        ((TARGET_SEEN == 0)) || die "不接受放在目標之後的選項：$arg"
+
+        flags="${arg#-}"
+        [[ -n "$flags" ]] || die "無效選項：$arg"
+
+        for ((i = 0; i < ${#flags}; i++)); do
+            flag="${flags:i:1}"
+            case "$flag" in
+                d|p|R|r|v) ;;
+                n) DRY_RUN_ONLY=1 ;;
+                f) die "-f 被禁止：本 wrapper 不允許強制卸載" ;;
+                *) die "不支援的選項：-$flag" ;;
+            esac
+        done
+    else
+        TARGET_SEEN=1
+        TARGETS+=("$arg")
+    fi
+done
+
+((${#TARGETS[@]} == 1)) || die "原生 zfs destroy 一次只接受一個目標，請分次執行"
+
+TARGET="${TARGETS[0]}"
+
+[[ "$TARGET" != *'#'* ]] || die "目前不支援 bookmark 目標（#）；請先使用原生命令另行評估"
+[[ "$TARGET" != *'%'* ]] || die "目前不支援 snapshot range（%）；請指定單一 snapshot"
+
+if [[ "$TARGET" == *@* ]]; then
+    snapshot_part="${TARGET#*@}"
+    [[ -n "$snapshot_part" && "$snapshot_part" != *'@'* && "$snapshot_part" != *','* ]] ||
+        die "目前只支援單一 snapshot 名稱，不支援逗號清單或多段 selector"
+fi
+
+TARGET_DATASET="${TARGET%%@*}"
+[[ -n "$TARGET_DATASET" ]] || die "無效的 ZFS 目標：$TARGET"
+TARGET_POOL="${TARGET_DATASET%%/*}"
+[[ -n "$TARGET_POOL" ]] || die "無法判斷目標 pool：$TARGET"
+
+# ------------------------------------------------------------
+# 3. Create a private evidence directory
+# ------------------------------------------------------------
+
+[[ "$LOG_BASE" == /* ]] || die "SAVE_ZFS_DESTROY_DIR 必須是絕對路徑"
+mkdir -p -- "$LOG_BASE" || die "無法建立紀錄根目錄：$LOG_BASE"
+LOG_BASE="$(realpath -e -- "$LOG_BASE")" || die "無法解析紀錄根目錄"
+[[ "$LOG_BASE" != "/" ]] || die "不允許將 / 設為證據根目錄"
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+SAFE_NAME="$TARGET"
+SAFE_NAME="${SAFE_NAME//\//_}"
+SAFE_NAME="${SAFE_NAME//@/_}"
+SAFE_NAME="${SAFE_NAME//#/_}"
+SAFE_NAME="${SAFE_NAME//[^a-zA-Z0-9_.-]/_}"
+SAFE_NAME="${SAFE_NAME:0:80}"
+
+umask 077
+LOG_DIR="$(mktemp -d -- "$LOG_BASE/${STAMP}-${SAFE_NAME}-$$.XXXXXX")" ||
+    die "無法建立證據目錄"
+
+exec > >(tee -a "$LOG_DIR/session.log") 2>&1
+
+# ------------------------------------------------------------
+# 4. Header and script backup
+# ------------------------------------------------------------
+
+section "ZFS-DESTROY-NS"
+echo "Time:     $(date --iso-8601=seconds)"
+echo "Host:     $(hostname)"
+echo "Target:   $TARGET"
+echo "Evidence: $LOG_DIR"
+
+echo
+echo "Native command:"
+print_command zfs destroy "${ARGS[@]}"
+
+[[ -f "$0" ]] || die "無法定位目前執行的腳本檔案"
+cp -- "$0" "$LOG_DIR/script.sh" || die "無法保存腳本副本"
+sha256sum "$LOG_DIR/script.sh" >"$LOG_DIR/script.sha256" || die "無法計算腳本 SHA256"
+
+# ------------------------------------------------------------
+# 5. Global and target evidence
+# ------------------------------------------------------------
+
+section "GLOBAL EVIDENCE"
+
+capture zfs-version.txt zfs version || die "zfs version 證據失敗"
+capture pool-list.txt zpool list -H -o name,health,size,alloc,free || die "pool list 證據失敗"
+capture pool-status.txt zpool status -vP || die "pool status 證據失敗"
+
+if awk '$2 != "ONLINE" { bad=1 } END { exit !bad }' "$LOG_DIR/pool-list.txt"; then
+    echo "WARNING: 至少一個 pool 不是 ONLINE，請檢查 pool-status.txt"
+fi
+
+section "TARGET EVIDENCE"
+echo "Target: $TARGET"
+
+capture target-list.txt \
+    zfs list -r -t all -o name,type,used,refer,avail,mountpoint "$TARGET_DATASET" ||
+    die "目標清單讀取失敗：$TARGET_DATASET"
+
+capture target-properties.txt \
+    zfs get -r -o name,property,value,source \
+    guid,type,mountpoint,mounted,canmount,origin,used,refer,usedbysnapshots,usedbychildren \
+    "$TARGET_DATASET" || die "目標屬性讀取失敗：$TARGET_DATASET"
+
+capture target-pool-status.txt zpool status -vP "$TARGET_POOL" ||
+    die "目標 pool 狀態讀取失敗：$TARGET_POOL"
+
+capture_history_tail "$TARGET_POOL" target-history-last-40.txt
+
+TARGET_GUID="$(get_guid "$TARGET" 2>/dev/null)" || die "無法取得目標 GUID：$TARGET"
+[[ "$TARGET_GUID" =~ ^[0-9]+$ ]] || die "目標 GUID 格式異常：$TARGET"
+echo "Target GUID: $TARGET_GUID"
+
+# ------------------------------------------------------------
+# 6. Build a parseable native preview command
+# ------------------------------------------------------------
+
+# -n and -v are always injected exactly once. -p is omitted from preview
+# because it changes output to a machine-oriented format; actual ARGS remain
+# untouched and are passed to the final native destroy command.
+PREVIEW_ARGS=(-n -v)
+for arg in "${ARGS[@]}"; do
+    if [[ "$arg" == -* ]]; then
+        flags="${arg#-}"
+        kept=""
+        for ((i = 0; i < ${#flags}; i++)); do
+            flag="${flags:i:1}"
+            case "$flag" in
+                n|p|v) ;;
+                *) kept+="$flag" ;;
+            esac
+        done
+        [[ -n "$kept" ]] && PREVIEW_ARGS+=("-$kept")
+    else
+        PREVIEW_ARGS+=("$arg")
+    fi
+done
+
+# ------------------------------------------------------------
+# 7. Initial native dry-run and complete destroy manifest
+# ------------------------------------------------------------
+
+section "DESTROY DRY-RUN"
+echo "Preview command (adds -n -v; omits preview-only -p formatting):"
+print_command zfs destroy "${PREVIEW_ARGS[@]}"
+
+if zfs destroy "${PREVIEW_ARGS[@]}" >"$LOG_DIR/dry-run.txt" 2>&1; then
+    PREVIEW_RC=0
+else
+    PREVIEW_RC=$?
+fi
+
+echo "Preview exit status: $PREVIEW_RC"
+echo "Preview output saved: dry-run.txt"
+
+((PREVIEW_RC == 0)) || {
+    tail -n 12 "$LOG_DIR/dry-run.txt"
+    die "dry-run 失敗，取消 destroy"
+}
+
+DESTROY_NAMES_FILE="$LOG_DIR/destroy-manifest.names"
+DESTROY_MANIFEST_FILE="$LOG_DIR/destroy-manifest.tsv"
+
+if ! extract_destroy_names "$LOG_DIR/dry-run.txt" "$DESTROY_NAMES_FILE"; then
+    tail -n 20 "$LOG_DIR/dry-run.txt"
+    die "dry-run 沒有可解析的 'would destroy' 清單；拒絕繼續"
+fi
+
+if ! grep -Fxq -- "$TARGET" "$DESTROY_NAMES_FILE"; then
+    die "dry-run 清單沒有包含指定目標：$TARGET"
+fi
+
+if ! build_destroy_manifest "$DESTROY_NAMES_FILE" "$DESTROY_MANIFEST_FILE"; then
+    die "無法為完整 dry-run 清單建立 GUID manifest；拒絕繼續"
+fi
+
+TARGET_MANIFEST_GUID="$(awk -F '\t' -v target="$TARGET" '$1 == target { print $2; exit }' "$DESTROY_MANIFEST_FILE")"
+[[ -n "$TARGET_MANIFEST_GUID" && "$TARGET_MANIFEST_GUID" == "$TARGET_GUID" ]] ||
+    die "目標 GUID 與 destroy manifest 不一致"
+
+load_manifest_scope "$DESTROY_MANIFEST_FILE"
+
+DESTROY_COUNT="$(wc -l <"$DESTROY_MANIFEST_FILE" | tr -d ' ')"
+echo "Planned destroy objects: $DESTROY_COUNT"
+echo "Manifest saved: destroy-manifest.tsv"
+echo "完整預覽："
+cat "$LOG_DIR/dry-run.txt"
+
+# Save origin/type details for every filesystem/volume in the deletion set.
+MANIFEST_DATASET_PROPERTIES="$LOG_DIR/manifest-dataset-properties.txt"
+: >"$MANIFEST_DATASET_PROPERTIES"
+for dataset in "${MANIFEST_DATASETS[@]}"; do
+    zfs get -H -o name,property,value,source guid,type,origin "$dataset" \
+        >>"$MANIFEST_DATASET_PROPERTIES" 2>&1 ||
+        die "無法保存計畫刪除 dataset 的 GUID/type/origin：$dataset"
+done
+
+# Active NFS/SMB sharing is not changed automatically. Namespace-local mounts
+# are handled explicitly after the operator confirms the displayed plan.
+section "SHARE SAFETY CHECK"
+if check_shares_disabled "$LOG_DIR/dataset-share-properties-initial.txt"; then
+    echo "PASS: 計畫刪除的 filesystem 未啟用 sharenfs/sharesmb"
+else
+    if ((DRY_RUN_ONLY)); then
+        echo "WARNING: share properties are enabled or unreadable; real destroy will be blocked"
+    else
+        die "計畫刪除範圍內有啟用或無法確認的 NFS/SMB share；此 wrapper 不會自動 unshare"
+    fi
+fi
+
+# Discover mount references in every visible process namespace. These will
+# be unmounted via nsenter only after DESTROY confirmation.
+section "MOUNT NAMESPACE DISCOVERY"
+MOUNT_FILE="$LOG_DIR/mount-namespaces.txt"
+INITIAL_UNMOUNT_PLAN="$LOG_DIR/namespace-unmount-plan.tsv"
+if scan_mount_namespaces "$MOUNT_FILE" "$INITIAL_UNMOUNT_PLAN"; then
+    echo "PASS: no matching ZFS namespace mounts found"
+    INITIAL_MOUNT_SCAN_RC=0
+else
+    INITIAL_MOUNT_SCAN_RC=$?
+    if ((INITIAL_MOUNT_SCAN_RC == 1)); then
+        echo "FOUND: namespace mounts need normal umount before zfs destroy"
+        print_namespace_unmount_plan "$INITIAL_UNMOUNT_PLAN"
+    elif ((DRY_RUN_ONLY)); then
+        echo "WARNING: namespace scan incomplete; dry-run only continues"
+    else
+        die "mount namespace 掃描不完整，無法安全執行 nsenter/umount"
+    fi
+fi
+
+# Native dry-run only: evidence is saved; never ask for DESTROY.
+if ((DRY_RUN_ONLY)); then
+    section "DRY-RUN ONLY"
+    echo "原始參數包含 -n，不會執行實際 destroy。"
+    echo "Evidence: $LOG_DIR"
+    exit 0
+fi
+
+# ------------------------------------------------------------
+# 9. Explicit confirmation
+# ------------------------------------------------------------
+
+section "CONFIRM DESTROY"
+echo "即將執行原生命令："
+print_command zfs destroy "${ARGS[@]}"
+echo
+echo "Target: $TARGET"
+echo "Target GUID: $TARGET_GUID"
+echo "Planned objects (including dependent clones, if any): $DESTROY_COUNT"
+echo "Namespace mount entries to unmount: $(wc -l <"$INITIAL_UNMOUNT_PLAN" | tr -d ' ')"
+if [[ -s "$INITIAL_UNMOUNT_PLAN" ]]; then
+    echo "將在以下 namespace 使用 nsenter + 一般 umount（不使用 -l/-f）："
+    print_namespace_unmount_plan "$INITIAL_UNMOUNT_PLAN"
+    echo "注意：這會讓上述 namespace 內的程序失去該掛載路徑；不會停止或重啟服務。"
+fi
+echo "Evidence: $LOG_DIR"
+echo
+echo "輸入 DESTROY 才會繼續。"
+
+[[ -t 0 ]] || die "stdin 不是互動終端，拒絕執行 destroy"
+read -r -p '> ' answer || die "無法取得確認輸入"
+[[ "$answer" == "DESTROY" ]] || die "確認字串不符，取消 destroy"
+
+# ------------------------------------------------------------
+# 10. Recheck every object identity after confirmation
+# ------------------------------------------------------------
+
+section "RECHECK DESTROY MANIFEST"
+if ! verify_manifest_identity "$DESTROY_MANIFEST_FILE"; then
+    die "destroy manifest 中至少一個物件的 GUID/type 已改變，拒絕 destroy"
+fi
+echo "PASS: all $DESTROY_COUNT planned object identities unchanged"
+
+# ------------------------------------------------------------
+# 11. Final dry-run; compare both object list and GUID manifest
+# ------------------------------------------------------------
+
+section "FINAL DRY-RUN"
+echo "再次執行原生 dry-run："
+print_command zfs destroy "${PREVIEW_ARGS[@]}"
+
+if zfs destroy "${PREVIEW_ARGS[@]}" >"$LOG_DIR/final-dry-run.txt" 2>&1; then
+    FINAL_RC=0
+else
+    FINAL_RC=$?
+fi
+
+echo "Final preview exit status: $FINAL_RC"
+echo "Output saved: final-dry-run.txt"
+((FINAL_RC == 0)) || {
+    tail -n 12 "$LOG_DIR/final-dry-run.txt"
+    die "最後一次 dry-run 失敗，取消 destroy"
+}
+
+FINAL_NAMES_FILE="$LOG_DIR/final-destroy-manifest.names"
+FINAL_MANIFEST_FILE="$LOG_DIR/final-destroy-manifest.tsv"
+
+if ! extract_destroy_names "$LOG_DIR/final-dry-run.txt" "$FINAL_NAMES_FILE" ||
+   ! grep -Fxq -- "$TARGET" "$FINAL_NAMES_FILE" ||
+   ! build_destroy_manifest "$FINAL_NAMES_FILE" "$FINAL_MANIFEST_FILE"; then
+    die "最後一次 dry-run 的 destroy 清單無法完整解析，拒絕 destroy"
+fi
+
+if ! cmp -s "$DESTROY_NAMES_FILE" "$FINAL_NAMES_FILE"; then
+    echo "ERROR: 前後兩次 dry-run 的 destroy object 清單不同。"
+    diff -u "$DESTROY_NAMES_FILE" "$FINAL_NAMES_FILE" | head -n 60 || true
+    die "destroy 範圍已改變，拒絕 destroy"
+fi
+
+if ! cmp -s "$DESTROY_MANIFEST_FILE" "$FINAL_MANIFEST_FILE"; then
+    echo "ERROR: 前後兩次 dry-run 的 GUID/type manifest 不同。"
+    diff -u "$DESTROY_MANIFEST_FILE" "$FINAL_MANIFEST_FILE" | head -n 60 || true
+    die "destroy object identity 已改變，拒絕 destroy"
+fi
+
+if ! cmp -s "$LOG_DIR/dry-run.txt" "$LOG_DIR/final-dry-run.txt"; then
+    echo "ERROR: 前後兩次 dry-run 原始輸出不同。"
+    diff -u "$LOG_DIR/dry-run.txt" "$LOG_DIR/final-dry-run.txt" | head -n 60 || true
+    die "預覽內容已改變，拒絕 destroy"
+fi
+
+echo "PASS: destroy object list unchanged"
+echo "PASS: all planned GUID/type values unchanged"
+echo "PASS: complete dry-run output identical"
+
+# Check that shares did not become enabled while awaiting confirmation.
+section "FINAL SHARE SAFETY CHECK"
+if ! check_shares_disabled "$LOG_DIR/dataset-share-properties-final.txt"; then
+    die "確認後 share properties 已改變或無法讀取；拒絕繼續"
+fi
+echo "PASS: no NFS/SMB share is enabled in the destroy set"
+
+# Refresh namespace mount records after confirmation. If the cleanup scope
+# changed while the user was reviewing the prompt, require a fresh run.
+section "REFRESH NAMESPACE UNMOUNT PLAN"
+FINAL_PLAN_BEFORE_UNMOUNT="$LOG_DIR/namespace-unmount-plan-final.tsv"
+if scan_mount_namespaces "$LOG_DIR/mount-namespaces-final-before-unmount.txt" "$FINAL_PLAN_BEFORE_UNMOUNT"; then
+    FINAL_MOUNT_SCAN_RC=0
+else
+    FINAL_MOUNT_SCAN_RC=$?
+fi
+((FINAL_MOUNT_SCAN_RC != 2)) || die "確認後 mount namespace 掃描不完整；拒絕繼續"
+
+normalize_unmount_plan "$INITIAL_UNMOUNT_PLAN" "$LOG_DIR/namespace-plan-initial.signature"
+normalize_unmount_plan "$FINAL_PLAN_BEFORE_UNMOUNT" "$LOG_DIR/namespace-plan-final.signature"
+if ! cmp -s "$LOG_DIR/namespace-plan-initial.signature" "$LOG_DIR/namespace-plan-final.signature"; then
+    echo "ERROR: 確認前後的 namespace mount scope 已改變。"
+    diff -u "$LOG_DIR/namespace-plan-initial.signature" \
+        "$LOG_DIR/namespace-plan-final.signature" | head -n 40 || true
+    die "namespace cleanup scope changed; review a new preview before proceeding"
+fi
+echo "PASS: namespace mount scope unchanged after confirmation"
+
+TEST_MODE="${SAVE_ZFS_DESTROY_TEST_MODE:-0}"
+TEST_UNMOUNT="${SAVE_ZFS_DESTROY_TEST_UNMOUNT:-0}"
+[[ "$TEST_MODE" == "0" || "$TEST_MODE" == "1" ]] || die "SAVE_ZFS_DESTROY_TEST_MODE 只接受 0 或 1"
+[[ "$TEST_UNMOUNT" == "0" || "$TEST_UNMOUNT" == "1" ]] || die "SAVE_ZFS_DESTROY_TEST_UNMOUNT 只接受 0 或 1"
+if [[ "$TEST_UNMOUNT" == "1" && "$TEST_MODE" != "1" ]]; then
+    die "SAVE_ZFS_DESTROY_TEST_UNMOUNT=1 只能搭配 SAVE_ZFS_DESTROY_TEST_MODE=1"
+fi
+
+# TEST MODE remains non-destructive by default. Explicit TEST_UNMOUNT=1 opts
+# into the namespace umount side effects while still skipping zfs destroy.
+if [[ "$TEST_MODE" == "1" && "$TEST_UNMOUNT" != "1" ]]; then
+    section "TEST MODE"
+    echo "PASS: destroy manifest and GUID/type checks completed"
+    echo "PASS: namespace cleanup plan refreshed and unchanged"
+    echo "TEST MODE: 未執行 nsenter/umount，也不執行 zfs destroy。"
+    echo "如要只測試 namespace unmount、保留 dataset，使用："
+    echo "SAVE_ZFS_DESTROY_TEST_MODE=1 SAVE_ZFS_DESTROY_TEST_UNMOUNT=1"
+    echo "Evidence: $LOG_DIR"
+    exit 0
+fi
+
+# Perform ordinary unmounts inside each affected mount namespace. No lazy or
+# force fallback is allowed. A failure leaves the dataset intact and logs kept.
+section "NAMESPACE UMOUNT"
+if [[ -s "$FINAL_PLAN_BEFORE_UNMOUNT" ]]; then
+    print_namespace_unmount_plan "$FINAL_PLAN_BEFORE_UNMOUNT"
+    if ! unmount_namespace_plan "$FINAL_PLAN_BEFORE_UNMOUNT" "$LOG_DIR/namespace-unmount.log"; then
+        die "至少一個 namespace 的一般 umount 失敗；已停止，未執行 zfs destroy。請檢查 namespace-unmount.log"
+    fi
+else
+    echo "No namespace mounts require unmount."
+    : >"$LOG_DIR/namespace-unmount.log"
+fi
+
+# Rescan every visible namespace. Do not proceed while a matching mount remains
+# or if the scan is incomplete.
+section "VERIFY NAMESPACE UMOUNT"
+POST_UMOUNT_PLAN="$LOG_DIR/namespace-unmount-plan-after.tsv"
+if scan_mount_namespaces "$LOG_DIR/mount-namespaces-after-umount.txt" "$POST_UMOUNT_PLAN"; then
+    echo "PASS: no matching ZFS mounts remain in scanned process namespaces"
+else
+    POST_SCAN_RC=$?
+    if ((POST_SCAN_RC == 1)); then
+        print_namespace_unmount_plan "$POST_UMOUNT_PLAN"
+        die "umount 後仍有 ZFS namespace mount；未執行 zfs destroy"
+    else
+        die "umount 後 namespace 掃描不完整；未執行 zfs destroy"
+    fi
+fi
+
+section "VERIFY ZFS MOUNT/SHARE STATE"
+if ! check_post_unmount_state "$LOG_DIR/dataset-state-after-umount.txt"; then
+    die "namespace umount 後仍有 mounted/share 狀態或屬性讀取失敗；未執行 zfs destroy"
+fi
+echo "PASS: all planned filesystems mounted=no and shares=off"
+
+# One final native dry-run after the namespace cleanup; the planned destroy
+# set must remain exactly the same before running the original command.
+section "POST-UMOUNT FINAL DRY-RUN"
+if zfs destroy "${PREVIEW_ARGS[@]}" >"$LOG_DIR/post-umount-dry-run.txt" 2>&1; then
+    POST_UMOUNT_PREVIEW_RC=0
+else
+    POST_UMOUNT_PREVIEW_RC=$?
+fi
+echo "Post-umount preview exit status: $POST_UMOUNT_PREVIEW_RC"
+((POST_UMOUNT_PREVIEW_RC == 0)) || {
+    tail -n 12 "$LOG_DIR/post-umount-dry-run.txt"
+    die "namespace umount 後 dry-run 失敗；未執行 zfs destroy"
+}
+POST_UMOUNT_NAMES="$LOG_DIR/post-umount-destroy.names"
+POST_UMOUNT_MANIFEST="$LOG_DIR/post-umount-destroy.tsv"
+if ! extract_destroy_names "$LOG_DIR/post-umount-dry-run.txt" "$POST_UMOUNT_NAMES" ||
+   ! grep -Fxq -- "$TARGET" "$POST_UMOUNT_NAMES" ||
+   ! build_destroy_manifest "$POST_UMOUNT_NAMES" "$POST_UMOUNT_MANIFEST"; then
+    die "namespace umount 後無法解析完整 destroy manifest；未執行 destroy"
+fi
+if ! cmp -s "$DESTROY_NAMES_FILE" "$POST_UMOUNT_NAMES" ||
+   ! cmp -s "$DESTROY_MANIFEST_FILE" "$POST_UMOUNT_MANIFEST" ||
+   ! cmp -s "$LOG_DIR/dry-run.txt" "$LOG_DIR/post-umount-dry-run.txt"; then
+    echo "ERROR: namespace umount 前後的 destroy scope 或 preview output 不同。"
+    diff -u "$DESTROY_MANIFEST_FILE" "$POST_UMOUNT_MANIFEST" | head -n 40 || true
+    die "namespace umount changed the destroy plan; refusing native destroy"
+fi
+echo "PASS: destroy manifest and full dry-run output unchanged after namespace umount"
+
+# Last race check immediately before the test-mode exit or native destroy.
+section "LAST MOUNT NAMESPACE CHECK"
+LAST_NAMESPACE_PLAN="$LOG_DIR/namespace-unmount-plan-last-check.tsv"
+if scan_mount_namespaces "$LOG_DIR/mount-namespaces-last-check.txt" "$LAST_NAMESPACE_PLAN"; then
+    echo "PASS: no matching namespace mounts remain"
+else
+    LAST_SCAN_RC=$?
+    if ((LAST_SCAN_RC == 1)); then
+        print_namespace_unmount_plan "$LAST_NAMESPACE_PLAN"
+        die "new namespace mount appeared after cleanup; refusing zfs destroy"
+    else
+        die "last namespace scan incomplete; refusing zfs destroy"
+    fi
+fi
+
+# Test mode with TEST_UNMOUNT=1 deliberately performs namespace unmounts but
+# still stops before the destructive ZFS command.
+if [[ "$TEST_MODE" == "1" ]]; then
+    section "TEST MODE"
+    echo "PASS: namespace mounts unmounted and verified"
+    echo "PASS: all planned filesystems mounted=no and shares=off"
+    echo "PASS: destroy manifest unchanged after unmount"
+    echo "TEST MODE: 不執行實際 zfs destroy；dataset 仍保留。"
+    echo "Evidence: $LOG_DIR"
+    exit 0
+fi
+
+# ------------------------------------------------------------
+# 12. Execute the original native destroy command
+# ------------------------------------------------------------
+
+section "EXECUTE DESTROY"
+echo "Executing original native command:"
+print_command zfs destroy "${ARGS[@]}"
+
+if zfs destroy "${ARGS[@]}" >"$LOG_DIR/destroy-output.txt" 2>&1; then
+    DESTROY_RC=0
+else
+    DESTROY_RC=$?
+fi
+
+echo "Destroy exit status: $DESTROY_RC"
+if [[ -s "$LOG_DIR/destroy-output.txt" ]]; then
+    cat "$LOG_DIR/destroy-output.txt"
+fi
+
+# ------------------------------------------------------------
+# 13. Verify every object from the complete destroy manifest is absent
+# ------------------------------------------------------------
+
+section "POST-DESTROY VERIFICATION"
+
+declare -A POST_POOL_FILES=()
+pool_index=0
+
+for pool in "${MANIFEST_POOLS[@]}"; do
+    pool_index=$((pool_index + 1))
+    pool_file="$LOG_DIR/post-pool-${pool_index}.txt"
+
+    if zfs list -H -r -t all -o name "$pool" >"$pool_file" 2>&1; then
+        POST_POOL_FILES["$pool"]="$pool_file"
+        echo "Pool inventory: $pool PASS"
+    else
+        POST_POOL_FILES["$pool"]=""
+        echo "WARNING: 無法讀取 pool inventory：$pool"
+        POST_DESTROY_OK=0
+    fi
+
+done
+
+while IFS=$'\t' read -r name expected_guid expected_type; do
+    base="${name%%@*}"
+    pool="${base%%/*}"
+    pool_file="${POST_POOL_FILES[$pool]-}"
+
+    if [[ -z "$pool_file" || ! -f "$pool_file" ]]; then
+        echo "WARN: 無法確認物件是否已刪除：$name"
+        POST_DESTROY_OK=0
+    elif grep -Fxq -- "$name" "$pool_file"; then
+        echo "WARNING: Object still exists: $name"
+        POST_DESTROY_OK=0
+    else
+        echo "PASS: Object no longer exists: $name"
+    fi
+done <"$DESTROY_MANIFEST_FILE"
+
+for pool in "${MANIFEST_POOLS[@]}"; do
+    capture_optional "post-${pool//\//_}-pool-status.txt" zpool status -vP "$pool"
+done
+
+# ------------------------------------------------------------
+# 14. Final report and success-only evidence cleanup
+# ------------------------------------------------------------
+
+section "FINISHED"
+echo "Finished: $(date --iso-8601=seconds)"
+echo "Destroy exit status: $DESTROY_RC"
+
+if ((DESTROY_RC == 0 && POST_DESTROY_OK == 1)); then
+    echo "PASS: destroy manifest 中全部 $DESTROY_COUNT 個物件均已確認不存在"
+
+    if [[ "${SAVE_ZFS_DESTROY_KEEP_LOG:-0}" == "1" ]]; then
+        echo "Log preserved by SAVE_ZFS_DESTROY_KEEP_LOG=1"
+        echo "Evidence: $LOG_DIR"
+        exit 0
+    fi
+
+    # The directory was created by mktemp under the canonical LOG_BASE.
+    case "$LOG_DIR" in
+        "$LOG_BASE"/*) ;;
+        *)
+            echo "ERROR: 證據目錄不在允許的根目錄下，拒絕刪除"
+            echo "Evidence: $LOG_DIR"
+            exit 1
+            ;;
+    esac
+
+    [[ -d "$LOG_DIR" && ! -L "$LOG_DIR" ]] || {
+        echo "ERROR: 證據目錄狀態異常，拒絕刪除"
+        echo "Evidence: $LOG_DIR"
+        exit 1
+    }
+
+    echo "Destroy 成功，正在移除本次證據目錄。"
+    if rm -rf --one-file-system -- "$LOG_DIR"; then
+        echo "PASS: 本次 log 已清除"
+        exit 0
+    else
+        echo "WARNING: log 清除失敗"
+        echo "Evidence: $LOG_DIR"
+        exit 1
+    fi
+else
+    echo "WARNING: destroy 失敗或未能確認全部計畫物件已刪除，保留證據。"
+    echo "Evidence: $LOG_DIR"
+
+    if ((DESTROY_RC != 0)); then
+        exit "$DESTROY_RC"
+    fi
+
+    # Native destroy returned success, but post-destroy verification failed.
+    exit 1
+fi
+

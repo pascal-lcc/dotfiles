@@ -30,12 +30,15 @@
 # 
 # # A TOML linter such as https://taplo.tamasfe.dev/ can use this schema to validate your config.
 # If you encounter any issues, please make an issue at https://github.com/yazi-rs/schemas.
-"$schema" = "https://yazi-rs.github.io/schemas/keymap.json"
+#"$schema" = "https://yazi-rs.github.io/schemas/keymap.json"
 
 [mgr]
 
 keymap = [
+    # { on = [ "<FocusIn>" ], run = "noop", desc = "Ignore tmux focus in event" },
     { on = "<Esc>", run = "escape", desc = "Exit visual mode, clear selected, or cancel search" },
+    # { on = [ "<Esc>" ], run = "escape", desc = "Exit visual mode" },
+	# 攔截被打斷的 Escape Response 避免觸發 rename
     { on = "<C-[>", run = "escape", desc = "Exit visual mode, clear selected, or cancel search" },
     { on = "Q", run = "quit", desc = "Quit the process" },
     { on = "q", run = "quit --no-cwd-file", desc = "Quit the process without outputting cwd-file" },
@@ -112,8 +115,10 @@ keymap = [
     { on = "s", run = "search --via=fd", desc = "Search files by name via fd" },
     { on = "S", run = "search --via=rg", desc = "Search files by content via ripgrep" },
     { on = "<C-s>", run = "escape --search", desc = "Cancel the ongoing search" },
-    { on = "z", run = "plugin zoxide", desc = "Jump to a directory via zoxide" },
-    { on = "Z", run = "plugin fzf", desc = "Jump to a file/directory via fzf" },
+    # { on = "z", run = "plugin zoxide", desc = "Jump to a directory via zoxide" },
+    { on = [ "c", "z" ], run = "plugin zoxide", desc = "Jump to a directory via zoxide" },
+    # { on = "Z", run = "plugin fzf", desc = "Jump to a file/directory via fzf" },
+    { on = ["c", "Z"], run = "plugin fzf", desc = "Jump to a file/directory via fzf" },
 
     # Linemode
     { on = ["m", "s"], run = "linemode size", desc = "Linemode: size" },
@@ -179,7 +184,7 @@ keymap = [
     { on = "}", run = "tab_swap 1", desc = "Swap current tab with next tab" },
 
     # Tasks
-    { on = "w", run = "tasks_show", desc = "Show task manager" },
+    { on = "w", run = "tasks:show", desc = "Show task manager" },
 
     # Help
     { on = "~", run = "help", desc = "Open help" },
@@ -202,6 +207,9 @@ prepend_keymap = [
         # run = 'shell "pwsh -NoProfile -File .\script\copy_files.ps1 %*"'
         run = "plugin system-clipboard"
         , desc = "複製到系統剪貼簿" },
+
+    { on = [ "c", "r" ], run = "rename --cursor=before_ext", desc = "Rename a file or directory" },
+    { on = [ "r" ], run = "noop", desc = "Disable single key r" },
 ]
 
 

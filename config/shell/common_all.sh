@@ -433,13 +433,19 @@ else
 fi
 
 _FULL_PATH=$(readlink -f "$_CURRENT_SCRIPT" 2>/dev/null || realpath "$_CURRENT_SCRIPT" 2>/dev/null)
-if [[ "$_FULL_PATH" == *"/dotfiles"* ]]; then
-    # 刪除 "dotfiles" 之後的所有字元，保留到 "dotfiles" 為止
-    export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+# 同時相容 .dotfiles 與 dotfiles 的路徑識別
+if [[ "$_FULL_PATH" == *"/.dotfiles"* || "$_FULL_PATH" == *"/dotfiles"* ]]; then
+    if [[ "$_FULL_PATH" == *"/.dotfiles"* ]]; then
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/.dotfiles*}/.dotfiles"
+    else
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+    fi
+    
+    # 順便連 RUNTIME_DIR 都有了 (dotfiles 的上一層)
     export RUNTIME_DIR="${MY_DOTFILES_ROOT%/*}"
     
+    # 建立快捷 Alias
     alias dot="cd $MY_DOTFILES_ROOT"
-    # 你原本的 alias 是 cd $RUNTIME_DIR/dotfiles，其實就是 DOTFILES_ROOT
 fi
 
 # 清理暫存變數，保持環境乾淨
@@ -493,45 +499,66 @@ detect_tmux() {
 }
 
 get_wez_val() {
-    # 1. 噴射信號
-    # printf "\033]1337;SetUserVar=SYNC_TERM=$(echo -n "go" | base64)\007"
-    local val="go"
-    local b64_val=$(echo -n "$val" | base64 | tr -d '\n')
+    # 1. 產生一次性的 query
+    local nonce
+    printf -v nonce '%04x' "$((RANDOM & 0xffff))"
+    local query="go-$nonce"
+    # local query="go-$(printf '%04x' $((RANDOM & 0xffff)))"
+    local b64_val
+    b64_val=$(printf '%s' "$query" | base64 | tr -d '\n')
+
     local osc_seq="1337;SetUserVar=SYNC_TERM=$b64_val"
 
     if [ -n "$TMUX" ]; then
-        # 在 tmux 內：需包裹 \ePtmux; 和 \e\\
-        # 且內部的 Esc (\033) 要變成雙重 Esc
         printf "\033Ptmux;\033\033]${osc_seq}\007\033\\"
     else
-        # 原生終端：直接發送
         printf "\033]${osc_seq}\007"
     fi
-    
-    # 2. 關鍵：保存狀態並進入「隱形原始模式」
-    local old_stty=$(stty -g)
-    
-    # raw: 原始傳輸
-    # -echo: 關閉螢幕回顯 (這樣 WezTerm 噴過來的字就不會顯示在螢幕上)
-    # min 0 time 2: 最多等 0.2 秒，沒資料就收工，避免卡死
+
+    # 2. 保存 terminal state
+    local old_stty
+    old_stty=$(stty -g)
+
+    # 3. raw + no echo
+    # min 0 / time 1 = 最多等待 200ms
     stty raw -echo min 0 time 2 2>/dev/null
-    
-    # 3. 收割
-    # 我們可以讀長一點點沒關係，只要 WezTerm 沒噴換行，就不會觸發指令執行
-    local val=$(head -c 20 2>/dev/null)
-    
-    # 4. 恢復狀態 (必須立刻恢復，否則你的 Prompt 會變得很奇怪)
+
+    # 4. 等待 WezTerm 回傳
+    local response
+    IFS= read -r -t 0.2 response
+
+    # 5. 無論成功失敗，都恢復 terminal
     stty "$old_stty"
-    
-    # 5. 清理與套用
-    # 移除任何不可見字元
-    val=$(echo "$val" | tr -d '\000-\037 ')
-    
-    if [[ -n "$val" ]]; then
-        export TERM_BRAND="$val"
-        # Debug 用，確定有抓到但螢幕沒髒掉
-        # echo "Sync Success: $TERM_BRAND"
+
+    # 6. 沒收到任何東西
+    [[ -z "$response" ]] && return 1
+
+    # 7. 確認這是這一次 query 的 response
+    #
+    # response:
+    #   SYNC_TERM_REPLY:8f31:WezTerm-windows
+    #
+    local prefix="SYNC_TERM_REPLY:${query#go-}:"
+
+    if [[ "$response" == "$prefix"* ]]; then
+        local brand="${response#"$prefix"}"
+
+        # 清掉控制字元 / 空白
+        brand=$(printf '%s' "$brand" | tr -d '\000-\037 ')
+
+        if [[ -n "$brand" ]]; then
+            export TERM_BRAND="$brand"
+
+            # 暫時保留，之後再處理 tmux
+            if [ -n "$TMUX" ]; then
+                tmux set-environment -g TERM_BRAND "$brand"
+            fi
+
+            return 0
+        fi
     fi
+
+    return 1
 }
 
 if [ -d "$HOME/.local/share/fnm" ]; then

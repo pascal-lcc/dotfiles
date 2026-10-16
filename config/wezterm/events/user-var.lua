@@ -1,4 +1,4 @@
-local wezterm = require('wezterm')
+local wezterm = require("wezterm")
 
 local log = wezterm.log_info
 local M = {}
@@ -6,29 +6,41 @@ local M = {}
 local var_chaned_listen = {}
 
 M.setup = function(config)
-     -- window:mux_window():active_pane():get_user_vars()
-     wezterm.on('user-var-changed', function(window, pane, name, value)
-        if name == 'SYNC_TERM' then
-            if wezterm.target_triple:find("windows") then
-                pane:send_text("WezTerm-windows ") 
-            else
-                pane:send_text("WezTerm ") 
+    -- window:mux_window():active_pane():get_user_vars()
+    wezterm.on("user-var-changed", function(window, pane, name, value)
+        if name == "SYNC_TERM" then
+            local query = value
+            local nonce = query:match("^go%-(.+)$")
+
+            if nonce then
+                local brand
+
+                if wezterm.target_triple:find("windows") then
+                    brand = "WezTerm-windows"
+                else
+                    brand = "WezTerm"
+                end
+
+                local response = string.format("SYNC_TERM_REPLY:%s:%s\n", nonce, brand)
+
+                pane:send_text(response)
             end
         end
-        if name == 'SYNC_REQ' then
+
+        if name == "SYNC_REQ" then
             local req_id = value
-            
+
             -- 取得你想傳回去的變數 (例如 TERM_BRAND)
             local vars = pane:get_user_vars()
             local brand = vars.TERM_BRAND or "WezTerm"
-            
+
             -- 精準注入：echo 到對應的 ID 檔案裡
             -- 我們加上 \n 確保指令執行
             -- local inject_cmd = string.format("echo '%s' > /tmp/wez_vars_%s; printf '\r\27[2K'\n", brand, req_id)
             -- local inject_cmd = string.format("\r \27[K echo '%s' > /tmp/wez_vars_%s; printf '\r\27[K'\n", brand, req_id)
             -- local inject_cmd = string.format("echo export TERM_BRAND=WezTerm")
             local inject_cmd = string.format("export TERM_BRAND=WezTerm\n")
-            
+
             wezterm.log_info("正在為 ID " .. req_id .. " 注入資料")
             pane:send_text(inject_cmd)
         end

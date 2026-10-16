@@ -27,8 +27,12 @@ _FULL_PATH=$(readlink -f "$_CURRENT_FILE" 2>/dev/null || realpath "$_CURRENT_FIL
 
 # 2. 抓取到 "dotfiles" 為止的所有字元 (不使用 Regex 陣列)
 # 邏輯：利用 %% (從右邊開始刪除最長匹配)，砍掉 /dotfiles 之後的所有東西
-if [[ "$_FULL_PATH" == *"/dotfiles"* ]]; then
-    export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+if [[ "$_FULL_PATH" == *"/.dotfiles"* || "$_FULL_PATH" == *"/dotfiles"* ]]; then
+    if [[ "$_FULL_PATH" == *"/.dotfiles"* ]]; then
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/.dotfiles*}/.dotfiles"
+    else
+        export MY_DOTFILES_ROOT="${_FULL_PATH%%/dotfiles*}/dotfiles"
+    fi
     
     # 順便連 RUNTIME_DIR 都有了 (dotfiles 的上一層)
     export RUNTIME_DIR="${MY_DOTFILES_ROOT%/*}"
@@ -36,6 +40,7 @@ if [[ "$_FULL_PATH" == *"/dotfiles"* ]]; then
     # 建立快捷 Alias
     alias dot="cd $MY_DOTFILES_ROOT"
 fi
+
 
 # 清理暫存變數
 unset _CURRENT_FILE _FULL_PATH
@@ -199,9 +204,21 @@ unset SHELL_SYNC_ACTIVE
 export SHELL_SYNC_ACTIVE=1 
 
 # 在 Tmux 環境下，Tmux 宣告自己有沒有 Hook
-if [ -n "$TMUX" ]; then
+_has_valid_tmux() {
+    [ -n "$TMUX" ] || return 1
+    local sock_path="${TMUX%%,*}"
+    case "$sock_path" in
+        /*) [ -S "$sock_path" ] ;;
+        *)  return 1 ;;
+    esac
+}
+
+if _has_valid_tmux; then
     unset TMUX_HOOK_ACTIVE
-    export TMUX_HOOK_ACTIVE=$(tmux show-option -gv @tmux_sync_active)
+    TMUX_HOOK_ACTIVE=$(tmux show-option -gv @tmux_sync_active 2>/dev/null)
+    export TMUX_HOOK_ACTIVE
+else
+    export TMUX_HOOK_ACTIVE=''
 fi
 
 # 1. 定義你的函數
