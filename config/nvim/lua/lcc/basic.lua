@@ -109,14 +109,25 @@ end
 -- OSC 52 噴射函數
 local function osc52_yank(lines)
     local str = table.concat(lines, "\n")
-    if #str > 65536 then
+    local len = #str
+
+    if len > 65536 then
+        vim.notify(
+            string.format(
+                "Yanked %d bytes (Exceeds OSC 52 64KB safety limit, copied to local Neovim register only)",
+                len
+            ),
+            vim.log.levels.WARN
+        )
         return
     end
-    local b64 = vim.fn.system("base64 | tr -d '\n'", str)
+    -- 關鍵修正：改用 Neovim 內建的 base64 編碼，不需呼叫外部系統指令 (Win11/pwsh 相容)
+    local b64 = vim.base64.encode(str)
     local osc = "\27]52;c;" .. b64 .. "\7"
     if os.getenv("TMUX") then
         osc = "\27Ptmux;\27" .. osc .. "\27\\"
     end
+
     vim.fn.chansend(vim.v.stderr, osc)
 end
 
